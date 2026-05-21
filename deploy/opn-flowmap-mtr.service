@@ -1,0 +1,16 @@
+[Unit]
+Description=OPNsense traffic map mtr-worker (real-path measurement)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mozlet
+WorkingDirectory=/opt/opn-flowmap
+EnvironmentFile=/etc/default/opn-flowmap
+ExecStart=/opt/opn-flowmap/bin/mtr-worker
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

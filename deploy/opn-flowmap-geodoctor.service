@@ -1,0 +1,10 @@
+[Unit]
+Description=OPNsense traffic map geo-doctor (self-correcting geolocation pass)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=mozlet
+WorkingDirectory=/opt/opn-flowmap
+EnvironmentFile=/etc/default/opn-flowmap
+ExecStart=/opt/opn-flowmap/bin/geo-doctor

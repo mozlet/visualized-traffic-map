@@ -1,0 +1,21 @@
+[package]
+name = "mtr-worker"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Measures real paths to busy destinations with mtr, geolocates each hop, stores routes"
+
+[[bin]]
+name = "mtr-worker"
+path = "src/main.rs"
+
+[dependencies]
+geoip = { path = "../geoip" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+futures-util = "0.3"

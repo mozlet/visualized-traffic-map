@@ -1,0 +1,20 @@
+[package]
+name = "geoip"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "IP -> geo lookup (MaxMind GeoLite2) with a configurable home coordinate for private addresses"
+
+[lib]
+name = "geoip"
+path = "src/lib.rs"
+
+[[bin]]
+name = "geoip-lookup"
+path = "src/bin/geoip-lookup.rs"
+
+[dependencies]
+maxminddb = "0.24"
+serde = { workspace = true }

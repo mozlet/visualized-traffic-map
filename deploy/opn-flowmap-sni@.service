@@ -1,0 +1,16 @@
+[Unit]
+Description=OPNsense traffic map SNI sniffer on %i (ssh tcpdump ClientHello -> classify)
+After=network-online.target opn-flowmap-api.service
+Wants=network-online.target
+
+[Service]
+User=mozlet
+WorkingDirectory=/opt/opn-flowmap
+EnvironmentFile=/etc/default/opn-flowmap
+# %i is the LAN interface to capture (e.g. ixl0, ixl3, igb0).
+ExecStart=/opt/opn-flowmap/bin/sni.sh %i
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

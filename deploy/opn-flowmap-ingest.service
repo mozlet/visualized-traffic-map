@@ -1,0 +1,17 @@
+[Unit]
+Description=OPNsense traffic map ingest (telegraf NetFlow -> ingestor -> PG/Redis)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mozlet
+WorkingDirectory=/opt/opn-flowmap
+EnvironmentFile=/etc/default/opn-flowmap
+Environment=INGEST_SOURCE=telegraf
+ExecStart=/opt/opn-flowmap/bin/ingest.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

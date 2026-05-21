@@ -1,0 +1,75 @@
+# ---- Secrets / credentials ----
+*.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+config.local.*
+
+# ---- Backups (per CLAUDE.md convention: backups/YYYY-MM-DD-HHMMSS/) ----
+backups/
+
+# ---- GeoIP databases (large, licensed) ----
+*.mmdb
+data/geoip/
+
+# ---- Rust ----
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+
+# ---- Node / frontend ----
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+.vite/
+.cache/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Python (in case any tooling lands here) ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---- IDE / editor ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Logs / runtime ----
+*.log
+*.pid
+*.seed
+*.pcap
+*.pcapng
+
+# ---- Local data / scratch ----
+/tmp/
+/scratch/
+*.local
+
+# ---- Local dev / AI-assistant config (not for public release) ----
+CLAUDE.md
+.claude/
+.claudeignore
+.mcp.json
+.ClaudeCodeMultiAccounts.json

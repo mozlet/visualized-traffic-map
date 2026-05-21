@@ -1,0 +1,17 @@
+[package]
+name = "geo-doctor"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Data-driven self-correcting geolocation: aggregate observed flow geo into a canonical per-IP table with an audit trail"
+
+[[bin]]
+name = "geo-doctor"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
+anyhow = { workspace = true }

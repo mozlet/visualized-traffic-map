@@ -1,0 +1,22 @@
+[package]
+name = "flowd-parse"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Parser for flowd (OpenBSD/OPNsense Insight) binary store v1 log files"
+
+[lib]
+name = "flowd_parse"
+path = "src/lib.rs"
+
+[[bin]]
+name = "flowd-parse"
+path = "src/bin/flowd-parse.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

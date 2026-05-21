@@ -1,0 +1,24 @@
+[package]
+name = "ingestor"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Consumes flowd records from stdin, fans out to Redis (hot) and PostgreSQL (cold)"
+
+[[bin]]
+name = "ingestor"
+path = "src/main.rs"
+
+[dependencies]
+flowd-parse = { path = "../flowd-parse" }
+geoip = { path = "../geoip" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
+redis = { version = "0.27", features = ["tokio-comp"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "chrono", "ipnetwork"] }
+ipnetwork = "0.20"
+chrono = "0.4"
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
