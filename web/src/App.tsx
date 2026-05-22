@@ -9,7 +9,7 @@ import { terminatorLayers } from './terminator';
 import { Timeline } from './Timeline';
 import { DraggablePanel } from './DraggablePanel';
 import type { LiveFlow, ProtoKey, ServiceKey } from './types';
-import { STR, PLACE_LANG, initialLang, saveLang, type Lang } from './i18n';
+import { STR, PLACE_LANG, LANG_NAMES, initialLang, saveLang, type Lang } from './i18n';
 import './App.css';
 
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
@@ -114,12 +114,6 @@ export default function App() {
   const [refresh, setRefresh] = useState('5'); // default auto-refresh 5s
   const [lang, setLang] = useState<Lang>(initialLang); // default English
   const t = STR[lang];
-  const switchLang = () =>
-    setLang((l) => {
-      const next: Lang = l === 'en' ? 'zh' : 'en';
-      saveLang(next);
-      return next;
-    });
   const resetLayout = () => {
     Object.keys(localStorage)
       .filter((k) => k.startsWith('panel.'))
@@ -456,9 +450,22 @@ export default function App() {
         <button className="btn" title={t.fullscreen} onClick={toggleFullscreen}>
           ⛶
         </button>
-        <button className="btn lang" title="EN / 中文" onClick={switchLang}>
-          🌐 {lang === 'en' ? 'EN' : '中'}
-        </button>
+        <select
+          className="btn lang"
+          value={lang}
+          title="Language / 语言"
+          onChange={(e) => {
+            const l = e.target.value as Lang;
+            setLang(l);
+            saveLang(l);
+          }}
+        >
+          {(Object.keys(LANG_NAMES) as Lang[]).map((l) => (
+            <option key={l} value={l}>
+              {LANG_NAMES[l]}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="panel timectl">
