@@ -75,11 +75,14 @@ function fmtBps(b: number): string {
   if (b >= 1e3) return (b / 1e3).toFixed(0) + ' Kbps';
   return b + ' bps';
 }
+// Byte unit family, switched by the Units setting (SI 1000 / IEC 1024).
+const UNIT = { base: 1000, suf: ['B', 'K', 'M', 'G'] };
 function fmtBytes(b: number): string {
-  if (b >= 1e9) return (b / 1e9).toFixed(1) + 'G';
-  if (b >= 1e6) return (b / 1e6).toFixed(1) + 'M';
-  if (b >= 1e3) return (b / 1e3).toFixed(0) + 'K';
-  return b + 'B';
+  const { base, suf } = UNIT;
+  if (b >= base ** 3) return (b / base ** 3).toFixed(1) + suf[3];
+  if (b >= base ** 2) return (b / base ** 2).toFixed(1) + suf[2];
+  if (b >= base) return (b / base).toFixed(0) + suf[1];
+  return b + suf[0];
 }
 
 // Hover tooltip for a flow (deck.gl getTooltip).
@@ -117,6 +120,12 @@ export default function App() {
       saveLang(next);
       return next;
     });
+  const resetLayout = () => {
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('panel.'))
+      .forEach((k) => localStorage.removeItem(k));
+    location.reload();
+  };
   const [paused, setPaused] = useState(false);
   const [mode, setMode] = useState<'2d' | '3d'>(
     new URLSearchParams(location.search).get('view') === '3d' ? '3d' : '2d',
@@ -133,6 +142,16 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('opnmap.theme', theme);
   }, [theme]);
+  const [timeLocal, setTimeLocal] = useState(() => localStorage.getItem('opnmap.tz') !== 'utc');
+  const [hour12, setHour12] = useState(() => localStorage.getItem('opnmap.h12') === '1');
+  const [unitIEC, setUnitIEC] = useState(() => localStorage.getItem('opnmap.iec') === '1');
+  useEffect(() => localStorage.setItem('opnmap.tz', timeLocal ? 'local' : 'utc'), [timeLocal]);
+  useEffect(() => localStorage.setItem('opnmap.h12', hour12 ? '1' : '0'), [hour12]);
+  useEffect(() => {
+    UNIT.base = unitIEC ? 1024 : 1000;
+    UNIT.suf = unitIEC ? ['B', 'Ki', 'Mi', 'Gi'] : ['B', 'K', 'M', 'G'];
+    localStorage.setItem('opnmap.iec', unitIEC ? '1' : '0');
+  }, [unitIEC]);
   const [zoom, setZoom] = useState(1.6);
   const zoomRef = useRef(1.6);
   const [routes, setRoutes] = useState<RoutePath[]>([]);
@@ -170,9 +189,20 @@ export default function App() {
   }, [paused]);
 
   useEffect(() => {
-    const id = setInterval(() => setClockStr(new Date().toLocaleTimeString()), 1000);
+    const fmt = () => {
+      const s = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12,
+        timeZone: timeLocal ? undefined : 'UTC',
+      });
+      setClockStr(timeLocal ? s : `${s} UTC`);
+    };
+    fmt();
+    const id = setInterval(fmt, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [timeLocal, hour12]);
 
   // Map place-name labels follow the selected UI language.
   useEffect(() => {
@@ -531,6 +561,28 @@ export default function App() {
                 {theme === 'light' ? '☀️ Light' : '🌙 Dark'}
               </button>
             </div>
+            <div className="lbl2">{t.time}</div>
+            <div className="seg">
+              <button className={`segbtn ${timeLocal ? 'active' : ''}`} onClick={() => setTimeLocal(true)}>{t.local}</button>
+              <button className={`segbtn ${!timeLocal ? 'active' : ''}`} onClick={() => setTimeLocal(false)}>UTC</button>
+              <button className={`segbtn ${!hour12 ? 'active' : ''}`} onClick={() => setHour12(false)}>24h</button>
+              <button className={`segbtn ${hour12 ? 'active' : ''}`} onClick={() => setHour12(true)}>12h</button>
+            </div>
+            <div className="lbl2">{t.units}</div>
+            <div className="seg">
+              <button className={`segbtn ${!unitIEC ? 'active' : ''}`} onClick={() => setUnitIEC(false)}>KB MB GB</button>
+              <button className={`segbtn ${unitIEC ? 'active' : ''}`} onClick={() => setUnitIEC(true)}>KiB MiB GiB</button>
+            </div>
+            <div className="lbl2">{t.speed}</div>
+            <div className="seg">
+              <button className={`segbtn ${speed === 0.5 ? 'active' : ''}`} onClick={() => setSpeed(0.5)}>{t.slow}</button>
+              <button className={`segbtn ${speed === 1 ? 'active' : ''}`} onClick={() => setSpeed(1)}>{t.normal}</button>
+              <button className={`segbtn ${speed === 2 ? 'active' : ''}`} onClick={() => setSpeed(2)}>{t.fast}</button>
+            </div>
+            <div className="row">
+              <span className="proto">{t.resetLayout}</span>
+              <button className="segbtn" onClick={resetLayout} title={t.resetLayout}>↺</button>
+            </div>
           </div>
         )}
 
@@ -634,7 +686,7 @@ export default function App() {
         )}
       </DraggablePanel>
 
-      <Timeline windowS={tlWindow} label={t.timeline} onBrush={onBrush} />
+      <Timeline windowS={tlWindow} label={t.timeline} timeLocal={timeLocal} hour12={hour12} onBrush={onBrush} />
     </div>
   );
 }

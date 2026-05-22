@@ -16,23 +16,30 @@ function fmtBps(b: number): string {
   return String(b);
 }
 
-// Tick label format adapts to the total span.
-function fmtTick(t: number, windowS: number): string {
+// Tick label format adapts to the total span + the time settings.
+function fmtTick(t: number, windowS: number, timeLocal: boolean, hour12: boolean): string {
   const d = new Date(t * 1000);
-  const p = (n: number) => String(n).padStart(2, '0');
-  if (windowS <= 180) return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-  if (windowS <= 2 * 86400) return `${p(d.getHours())}:${p(d.getMinutes())}`;
-  if (windowS <= 30 * 86400) return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const tz = timeLocal ? undefined : 'UTC';
+  if (windowS <= 180)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12, timeZone: tz });
+  if (windowS <= 2 * 86400)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12, timeZone: tz });
+  if (windowS <= 30 * 86400)
+    return d.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12, timeZone: tz });
+  return d.toLocaleDateString([], { month: '2-digit', day: '2-digit', timeZone: tz });
 }
 
 export function Timeline({
   windowS,
   label,
+  timeLocal,
+  hour12,
   onBrush,
 }: {
   windowS: number;
   label: string;
+  timeLocal: boolean;
+  hour12: boolean;
   onBrush: (fromS: number, toS: number) => void;
 }) {
   const [pts, setPts] = useState<Pt[]>([]);
@@ -124,7 +131,7 @@ export function Timeline({
       </svg>
       <div className="tl-axis">
         {ticks.map((tk, i) => (
-          <span key={i}>{fmtTick(tk.t, windowS)}</span>
+          <span key={i}>{fmtTick(tk.t, windowS, timeLocal, hour12)}</span>
         ))}
       </div>
     </div>

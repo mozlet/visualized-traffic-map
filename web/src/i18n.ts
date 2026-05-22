@@ -40,6 +40,21 @@ export interface Strings {
   colorByApp: string;
   dayNight: string;
   theme: string;
+  time: string;
+  units: string;
+  local: string;
+  slow: string;
+  normal: string;
+  fast: string;
+  resetLayout: string;
+  search: string;
+  about: string;
+  legend: string;
+  screenshot: string;
+  shareLink: string;
+  zoomIn: string;
+  zoomOut: string;
+  goHome: string;
   rate: string;
   showing: string;
   cableRouted: string;
@@ -93,6 +108,21 @@ export const STR: Record<Lang, Strings> = {
     colorByApp: 'Color by app (SNI)',
     dayNight: 'Day/night line',
     theme: 'Theme',
+    time: 'Time',
+    units: 'Units',
+    local: 'Local',
+    slow: 'Slow',
+    normal: 'Normal',
+    fast: 'Fast',
+    resetLayout: 'Reset layout',
+    search: 'Search',
+    about: 'About & legend',
+    legend: 'Legend',
+    screenshot: 'Screenshot',
+    shareLink: 'Copy link',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    goHome: 'Go to home',
     rate: 'Rate',
     showing: 'Showing',
     cableRouted: 'Cable-routed',
@@ -144,6 +174,21 @@ export const STR: Record<Lang, Strings> = {
     colorByApp: '按应用着色 (SNI)',
     dayNight: '昼夜晨昏线',
     theme: '主题',
+    time: '时间',
+    units: '单位',
+    local: '本地',
+    slow: '慢',
+    normal: '正常',
+    fast: '快',
+    resetLayout: '复位布局',
+    search: '搜索',
+    about: '关于 & 图例',
+    legend: '图例',
+    screenshot: '截图',
+    shareLink: '复制链接',
+    zoomIn: '放大',
+    zoomOut: '缩小',
+    goHome: '回到 home',
     rate: '速率',
     showing: '显示中',
     cableRouted: '光缆路由',
