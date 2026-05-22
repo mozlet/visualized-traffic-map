@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DeckGL } from '@deck.gl/react';
-import { MapView, _GlobeView as GlobeView } from '@deck.gl/core';
+import { MapView, _GlobeView as GlobeView, FlyToInterpolator } from '@deck.gl/core';
 import { useFlows } from './flowStream';
 import { borderLayer, cableLayer, endpointLayer, homeLayers, routesLayer, tripsLayer, PROTO_COLOR } from './layers';
 import { fetchRoutes, type RoutePath } from './routes';
-import { loadLabels, labelLayers } from './labels';
+import { loadLabels, labelLayers, searchPlaces } from './labels';
 import { terminatorLayers } from './terminator';
 import { Timeline } from './Timeline';
 import { DraggablePanel } from './DraggablePanel';
@@ -125,6 +125,26 @@ export default function App() {
       .filter((k) => k.startsWith('panel.'))
       .forEach((k) => localStorage.removeItem(k));
     location.reload();
+  };
+  const [showSearch, setShowSearch] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const [searchQ, setSearchQ] = useState('');
+  const searchResults = searchQ ? searchPlaces(searchQ) : [];
+  // Export the current map as a PNG (preserveDrawingBuffer makes toDataURL work).
+  const screenshot = () => {
+    const c = document.querySelector('canvas') as HTMLCanvasElement | null;
+    if (!c) return;
+    const a = document.createElement('a');
+    a.download = `traffic-map-${Date.now()}.png`;
+    a.href = c.toDataURL('image/png');
+    a.click();
+  };
+  // Copy a link that re-opens the current view (?c=lon,lat&z=zoom).
+  const shareLink = () => {
+    const u = new URL(location.href);
+    u.searchParams.set('c', `${viewState.longitude.toFixed(3)},${viewState.latitude.toFixed(3)}`);
+    u.searchParams.set('z', viewState.zoom.toFixed(2));
+    navigator.clipboard?.writeText(u.toString()).catch(() => {});
   };
   const [paused, setPaused] = useState(false);
   const [mode, setMode] = useState<'2d' | '3d'>(
@@ -341,6 +361,27 @@ export default function App() {
     };
   }, [mode, home.lon, home.lat]);
 
+  // Controlled viewState (enables zoom buttons, go-home, search fly-to).
+  type VS = { longitude: number; latitude: number; zoom: number; pitch: number; bearing: number };
+  const [viewState, setViewState] = useState<VS>(initialViewState as VS);
+  useEffect(() => setViewState(initialViewState as VS), [mode]); // re-center on 2D/3D switch
+  useEffect(() => {
+    // recenter once the gateway's location arrives from /api/config
+    if (home.lat || home.lon) setViewState((v) => ({ ...v, longitude: home.lon, latitude: home.lat }));
+  }, [home.lat, home.lon]);
+  const flyTo = (lon: number, lat: number, zoom?: number) =>
+    setViewState((v) => ({
+      ...v,
+      longitude: lon,
+      latitude: lat,
+      zoom: zoom ?? v.zoom,
+      transitionDuration: 1300,
+      transitionInterpolator: new FlyToInterpolator({ speed: 1.6 }),
+    }) as VS);
+  const zoomBy = (d: number) =>
+    setViewState((v) => ({ ...v, zoom: Math.max(0, Math.min(18, v.zoom + d)), transitionDuration: 250 }) as VS);
+  const goHome = () => flyTo(home.lon, home.lat, Math.max(viewState.zoom, mode === '3d' ? 1.6 : 3));
+
   // Timeline window follows the selected range (live → last hour). Brushing a
   // sub-window fetches that absolute slice and replays it.
   const tlWindow = range === 'live' ? 3600 : Number(range);
@@ -366,14 +407,15 @@ export default function App() {
     <div className="root">
       <DeckGL
         views={view}
-        initialViewState={initialViewState}
+        viewState={viewState}
         onViewStateChange={(p) => {
           (window as unknown as { __vs?: unknown }).__vs = p.viewState;
-          const z = (p.viewState as { zoom: number }).zoom;
-          if (Math.abs(z - zoomRef.current) > 0.15) {
-            zoomRef.current = z;
-            setZoom(z);
+          const vs = p.viewState as VS;
+          if (Math.abs(vs.zoom - zoomRef.current) > 0.15) {
+            zoomRef.current = vs.zoom;
+            setZoom(vs.zoom);
           }
+          setViewState(vs);
         }}
         layers={layers}
         pickingRadius={5}
@@ -685,6 +727,81 @@ export default function App() {
           </>
         )}
       </DraggablePanel>
+
+      {/* Right-side control rail (zoom.earth-style) */}
+      <div className="rail">
+        <button className="rbtn" onClick={() => zoomBy(1)} title={t.zoomIn}>＋</button>
+        <button className="rbtn" onClick={() => zoomBy(-1)} title={t.zoomOut}>－</button>
+        <button className="rbtn" onClick={goHome} title={t.goHome}>🎯</button>
+        <button className={`rbtn ${showSearch ? 'on' : ''}`} onClick={() => setShowSearch((s) => !s)} title={t.search}>🔍</button>
+        <button className={`rbtn ${showSettings ? 'on' : ''}`} onClick={() => setShowSettings((s) => !s)} title={t.settings}>⚙</button>
+        <button className={`rbtn ${showInfo ? 'on' : ''}`} onClick={() => setShowInfo((s) => !s)} title={t.about}>ℹ️</button>
+        <button className="rbtn" onClick={screenshot} title={t.screenshot}>📷</button>
+        <button className="rbtn" onClick={shareLink} title={t.shareLink}>🔗</button>
+      </div>
+
+      {showSearch && (
+        <div className="panel searchbox">
+          <input
+            autoFocus
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            placeholder={`${t.search}…`}
+          />
+          {searchResults.length > 0 && (
+            <div className="search-results">
+              {searchResults.map((r, i) => (
+                <div
+                  key={i}
+                  className="search-item"
+                  onClick={() => {
+                    flyTo(r.position[0], r.position[1], 4.5);
+                    setShowSearch(false);
+                    setSearchQ('');
+                  }}
+                >
+                  {r.text}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showInfo && (
+        <div className="panel infobox">
+          <div className="ib-head">
+            <b>{t.legend}</b>
+            <button className="pb-btn" onClick={() => setShowInfo(false)}>✕</button>
+          </div>
+          <div className="ib-legend">
+            {Object.entries(PROTO_COLOR).map(([k, c]) => (
+              <span className="lg" key={k}>
+                <i style={{ background: `rgb(${c[0]},${c[1]},${c[2]})` }} />
+                {k.toUpperCase()}
+              </span>
+            ))}
+            <span className="lg">
+              <i style={{ background: 'rgb(239,68,68)' }} />
+              DDoS
+            </span>
+            <span className="lg">
+              <i style={{ background: 'rgb(56,189,248)' }} />
+              {t.cables}
+            </span>
+            <span className="lg">
+              <i style={{ background: '#fff', border: '1px solid #888' }} />
+              home
+            </span>
+          </div>
+          <div className="ib-about">
+            Zero-CDN traffic map · Natural Earth · TeleGeography · MaxMind GeoLite2
+          </div>
+          <a href="https://github.com/mozlet/visualized-traffic-map" target="_blank" rel="noreferrer">
+            github.com/mozlet/visualized-traffic-map
+          </a>
+        </div>
+      )}
 
       <Timeline windowS={tlWindow} label={t.timeline} timeLocal={timeLocal} hour12={hour12} onBrush={onBrush} />
     </div>

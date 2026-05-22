@@ -75,6 +75,19 @@ const cellNear = (active: Set<string>, pos: [number, number]): boolean => {
 // traffic itself is unobstructed; labels fade in as the user zooms into a region.
 const HIDE_BELOW = 2.4;
 
+// Name search over loaded places/countries (current language) → fly-to targets.
+export function searchPlaces(q: string, limit = 8): { text: string; position: [number, number] }[] {
+  const s = q.trim().toLowerCase();
+  if (!s) return [];
+  const out: { text: string; position: [number, number] }[] = [];
+  for (const c of countries) if (c.text.toLowerCase().includes(s)) out.push({ text: c.text, position: c.position });
+  for (const p of places) {
+    if (out.length >= limit) break;
+    if (p.text.toLowerCase().includes(s)) out.push({ text: p.text, position: p.position });
+  }
+  return out.slice(0, limit);
+}
+
 export function labelLayers(zoom: number, visible: boolean, active: Set<string>): Layer[] {
   if (!ready || !visible || zoom < HIDE_BELOW) return [];
   const zoomedIn = zoom >= 4.2;
