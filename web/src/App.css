@@ -240,7 +240,7 @@
 
 .livestats {
   bottom: 14px;
-  right: 54px; /* clear the right control rail */
+  right: 62px; /* clear the right control rail */
   width: 220px;
 }
 
@@ -258,13 +258,14 @@
 
 /* Right-side control rail (zoom.earth-style) */
 .rail {
+  position: absolute; /* was missing → fell to top-left under the brand */
   right: 14px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 72px; /* top-right, clear below the 2D/fullscreen/language row */
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 6px;
+  z-index: 10;
 }
 .rbtn {
   width: 32px;
@@ -320,7 +321,7 @@
 }
 .infobox {
   top: 56px;
-  right: 56px;
+  right: 66px; /* sit left of the right rail */
   width: 244px;
 }
 .ib-head {
