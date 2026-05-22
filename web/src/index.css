@@ -1,10 +1,25 @@
 :root {
+  /* dark (default / night) */
   --panel: rgba(15, 23, 42, 0.82);
   --border: rgba(148, 163, 184, 0.25);
   --text: #e2e8f0;
+  --muted: #94a3b8;
+  --map-bg: #0b1120;
+  --map-bg-3d: #05070f;
   font: 13px/1.4 ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
   color: var(--text);
   color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  /* light (day) */
+  --panel: rgba(255, 255, 255, 0.9);
+  --border: rgba(100, 116, 139, 0.32);
+  --text: #1e293b;
+  --muted: #64748b;
+  --map-bg: #e8eef5;
+  --map-bg-3d: #d3e2f2;
+  color-scheme: light;
 }
 
 * {

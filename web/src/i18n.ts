@@ -39,6 +39,7 @@ export interface Strings {
   placeLabels: string;
   colorByApp: string;
   dayNight: string;
+  theme: string;
   rate: string;
   showing: string;
   cableRouted: string;
@@ -91,6 +92,7 @@ export const STR: Record<Lang, Strings> = {
     placeLabels: 'Place labels',
     colorByApp: 'Color by app (SNI)',
     dayNight: 'Day/night line',
+    theme: 'Theme',
     rate: 'Rate',
     showing: 'Showing',
     cableRouted: 'Cable-routed',
@@ -141,6 +143,7 @@ export const STR: Record<Lang, Strings> = {
     placeLabels: '地名标注',
     colorByApp: '按应用着色 (SNI)',
     dayNight: '昼夜晨昏线',
+    theme: '主题',
     rate: '速率',
     showing: '显示中',
     cableRouted: '光缆路由',

@@ -45,14 +45,15 @@ const flowRGB = (f: LiveFlow, byCat: boolean): [number, number, number] => {
 };
 
 // Country borders from the bundled Natural Earth dataset — no external tiles.
-export function borderLayer(): Layer {
+export function borderLayer(theme: 'dark' | 'light' = 'dark'): Layer {
+  const light = theme === 'light';
   return new GeoJsonLayer({
-    id: 'borders',
+    id: `borders-${theme}`,
     data: '/data/world.geojson',
     stroked: true,
     filled: true,
-    getFillColor: [17, 24, 39, 255],
-    getLineColor: [71, 85, 105, 110],
+    getFillColor: light ? [226, 232, 240, 255] : [17, 24, 39, 255],
+    getLineColor: light ? [148, 163, 184, 170] : [71, 85, 105, 110],
     lineWidthMinPixels: 0.5,
     pickable: false,
   });

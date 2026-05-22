@@ -126,6 +126,13 @@ export default function App() {
   const [showLabels, setShowLabels] = useState(true);
   const [colorByApp, setColorByApp] = useState(false);
   const [showNight, setShowNight] = useState(false); // day/night terminator, off by default
+  const [theme, setTheme] = useState<'dark' | 'light'>(
+    () => (localStorage.getItem('opnmap.theme') === 'light' ? 'light' : 'dark'),
+  );
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('opnmap.theme', theme);
+  }, [theme]);
   const [zoom, setZoom] = useState(1.6);
   const zoomRef = useRef(1.6);
   const [routes, setRoutes] = useState<RoutePath[]>([]);
@@ -248,7 +255,7 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  const border = useMemo(() => borderLayer(), []);
+  const border = useMemo(() => borderLayer(theme), [theme]);
   // Labels rebuild only on zoom / toggle / active-traffic change — not per frame.
   const labels = useMemo(
     () => labelLayers(zoom, showLabels, activeRef.current),
@@ -355,7 +362,16 @@ export default function App() {
               }
             : null
         }
-        style={{ background: mode === '3d' ? '#05070f' : '#0b1120' }}
+        style={{
+          background:
+            theme === 'light'
+              ? mode === '3d'
+                ? '#d3e2f2'
+                : '#e8eef5'
+              : mode === '3d'
+                ? '#05070f'
+                : '#0b1120',
+        }}
       />
 
       <div className="panel brand">
@@ -505,6 +521,15 @@ export default function App() {
                 {t.dayNight}
               </span>
               <span className={`toggle ${showNight ? 'on' : ''}`} onClick={() => setShowNight((v) => !v)} />
+            </div>
+            <div className="row">
+              <span className="proto">{t.theme}</span>
+              <button
+                className="segbtn"
+                onClick={() => setTheme((v) => (v === 'dark' ? 'light' : 'dark'))}
+              >
+                {theme === 'light' ? '☀️ Light' : '🌙 Dark'}
+              </button>
             </div>
           </div>
         )}
