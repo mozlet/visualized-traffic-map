@@ -244,23 +244,15 @@
   width: 220px;
 }
 
-/* Top-right controls (2D/3D · fullscreen · language) */
-.topctl {
-  top: 14px;
-  right: 14px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.topctl select.lang {
-  max-width: 130px;
+.brand select.lang {
+  max-width: 120px;
 }
 
 /* Right-side control rail (zoom.earth-style) */
 .rail {
   position: absolute; /* was missing → fell to top-left under the brand */
   right: 14px;
-  top: 72px; /* top-right, clear below the 2D/fullscreen/language row */
+  top: 14px; /* top-right corner (2D/fullscreen/language are back in the brand) */
   display: flex;
   flex-direction: column;
   gap: 6px;

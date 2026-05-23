@@ -444,9 +444,6 @@ export default function App() {
         <span className="dot" style={{ background: health.c, boxShadow: `0 0 8px ${health.c}` }} title={health.t} />
         <h1>{t.brand}</h1>
         <span className="clock">{clockStr}</span>
-      </div>
-
-      <div className="panel topctl">
         <button className={`btn ${mode === '3d' ? 'active' : ''}`} onClick={() => setMode(mode === '2d' ? '3d' : '2d')}>
           {mode === '2d' ? '2D' : '3D'}
         </button>
