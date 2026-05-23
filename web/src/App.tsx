@@ -8,6 +8,7 @@ import { loadLabels, labelLayers, searchPlaces } from './labels';
 import { terminatorLayers } from './terminator';
 import { Timeline } from './Timeline';
 import { DraggablePanel } from './DraggablePanel';
+import { Icon } from './icons';
 import type { LiveFlow, ProtoKey, ServiceKey } from './types';
 import { STR, PLACE_LANG, LANG_NAMES, initialLang, saveLang, type Lang } from './i18n';
 import './App.css';
@@ -737,14 +738,30 @@ export default function App() {
 
       {/* Right-side control rail (zoom.earth-style) */}
       <div className="rail">
-        <button className="rbtn" onClick={() => zoomBy(1)} title={t.zoomIn}>＋</button>
-        <button className="rbtn" onClick={() => zoomBy(-1)} title={t.zoomOut}>－</button>
-        <button className="rbtn" onClick={goHome} title={t.goHome}>🎯</button>
-        <button className={`rbtn ${showSearch ? 'on' : ''}`} onClick={() => setShowSearch((s) => !s)} title={t.search}>🔍</button>
-        <button className={`rbtn ${showSettings ? 'on' : ''}`} onClick={() => setShowSettings((s) => !s)} title={t.settings}>⚙</button>
-        <button className={`rbtn ${showInfo ? 'on' : ''}`} onClick={() => setShowInfo((s) => !s)} title={t.about}>ℹ️</button>
-        <button className="rbtn" onClick={screenshot} title={t.screenshot}>📷</button>
-        <button className="rbtn" onClick={shareLink} title={t.shareLink}>🔗</button>
+        <button className="rbtn" onClick={() => zoomBy(1)} data-tip={t.zoomIn} aria-label={t.zoomIn}>
+          <Icon name="zoomIn" />
+        </button>
+        <button className="rbtn" onClick={() => zoomBy(-1)} data-tip={t.zoomOut} aria-label={t.zoomOut}>
+          <Icon name="zoomOut" />
+        </button>
+        <button className="rbtn" onClick={goHome} data-tip={t.goHome} aria-label={t.goHome}>
+          <Icon name="home" />
+        </button>
+        <button className={`rbtn ${showSearch ? 'on' : ''}`} onClick={() => setShowSearch((s) => !s)} data-tip={t.search} aria-label={t.search}>
+          <Icon name="search" />
+        </button>
+        <button className={`rbtn ${showSettings ? 'on' : ''}`} onClick={() => setShowSettings((s) => !s)} data-tip={t.settings} aria-label={t.settings}>
+          <Icon name="settings" />
+        </button>
+        <button className={`rbtn ${showInfo ? 'on' : ''}`} onClick={() => setShowInfo((s) => !s)} data-tip={t.about} aria-label={t.about}>
+          <Icon name="info" />
+        </button>
+        <button className="rbtn" onClick={screenshot} data-tip={t.screenshot} aria-label={t.screenshot}>
+          <Icon name="camera" />
+        </button>
+        <button className="rbtn" onClick={shareLink} data-tip={t.shareLink} aria-label={t.shareLink}>
+          <Icon name="share" />
+        </button>
       </div>
 
       {showSearch && (

@@ -260,8 +260,9 @@
   z-index: 10;
 }
 .rbtn {
-  width: 32px;
-  height: 32px;
+  position: relative;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -270,7 +271,6 @@
   border-radius: 8px;
   color: var(--text);
   cursor: pointer;
-  font-size: 15px;
   line-height: 1;
 }
 .rbtn:hover {
@@ -280,6 +280,30 @@
   background: #2563eb;
   border-color: #3b82f6;
   color: #fff;
+}
+/* Hover tooltip to the left of the rail (shows each button's function) */
+.rbtn::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  z-index: 20;
+  backdrop-filter: blur(8px);
+}
+.rbtn:hover::after {
+  opacity: 1;
 }
 .searchbox {
   top: 56px;
