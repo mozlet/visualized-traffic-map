@@ -22,8 +22,8 @@ const MAX_LAND_FRAC = 0.7; // combined overland legs must be < this * chord
 // China's international traffic egresses via coastal cable landing stations
 // (Shanghai is the primary one), not straight from inland. Trans-oceanic legs
 // to/from inland China are routed through this gateway so they land at the
-// coast and travel overland inland — instead of cutting across the sea to e.g.
-// inland Home. Configurable later per site.
+// coast and travel overland inland — instead of cutting across the sea to an
+// interior site. Configurable per site.
 const GATEWAY: LngLat = [121.47, 31.23]; // Shanghai
 const GATEWAY_MIN_CHORD = 2500;
 
@@ -34,7 +34,7 @@ function isInlandCN(p: LngLat): boolean {
   );
 }
 
-// East-China coastal land corridor (NE → Shanghai). A straight Home→Shanghai
+// East-China coastal land corridor (NE → Shanghai). A straight NE-inland→Shanghai
 // line sits at ~121°E and cuts straight down the Bohai Bay, Bohai Strait and
 // Yellow Sea (open water). These coastal/inland waypoints bend the overland leg
 // west around the seas so it follows land like real terrestrial fibre.
