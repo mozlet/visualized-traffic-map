@@ -428,65 +428,57 @@ async fn stats_handler(
         return empty().into_response();
     };
     let window = q.window.unwrap_or(60.0).clamp(1.0, 3600.0);
-    // Throughput over the trailing `window` seconds, computed correctly:
-    //  * de-dup re-exported flows (same identity is emitted every ~55s),
-    //  * spread each flow's bytes across its real lifetime (flow_start..flow_end)
-    //    so a long download isn't dumped as an instantaneous spike at export.
-    // Each flow contributes octets × (overlap with window / its duration); bps =
-    // sum / window × 8. Sub-second/zero-duration flows are floored to 1s.
+    // Throughput over the trailing `window`: sum the bytes of flows EXPORTED in the
+    // window (by recv_time) ÷ window. De-dup only EXACT re-exports (same identity +
+    // bytes + flow span); delta re-exports carry different bytes and are kept.
+    // (A prior version amortised each flow over its lifetime — that zeroed out a
+    // download whose long flows expired just before the window, showing single-digit
+    // Mbps for a multi-hundred-Mbps link.)
     let bps: f64 = sqlx::query_scalar(
         "WITH uniq AS (
-             SELECT DISTINCT ON (src_addr, dst_addr, src_port, dst_port, octets, flow_start, flow_end)
-                    octets::float8 AS oct, flow_start, flow_end
+             SELECT DISTINCT ON (src_addr, dst_addr, src_port, dst_port, flow_start, flow_end, octets)
+                    octets::float8 AS oct
              FROM flows
-             WHERE recv_time > now() - make_interval(secs => $1) - interval '120 seconds'
-               AND flow_start IS NOT NULL AND flow_end IS NOT NULL AND octets IS NOT NULL
-         ),
-         s AS (
-             SELECT oct,
-                    GREATEST(EXTRACT(EPOCH FROM (flow_end - flow_start)), 1.0) AS dur,
-                    EXTRACT(EPOCH FROM flow_end) AS ends
-             FROM uniq
+             WHERE recv_time > now() - make_interval(secs => $1) AND octets IS NOT NULL
          )
-         SELECT COALESCE(sum(
-             oct * GREATEST(0,
-                 LEAST(ends, EXTRACT(EPOCH FROM now()))
-                 - GREATEST(ends - dur, EXTRACT(EPOCH FROM now()) - $1)
-             ) / dur
-         ), 0) * 8 / $1
-         FROM s",
+         SELECT COALESCE(sum(oct), 0) * 8 / $1 FROM uniq",
     )
     .bind(window)
     .fetch_one(pg)
     .await
     .unwrap_or(0.0);
+    // Top talkers/countries/ports share the SAME trailing `window` as bps, so the
+    // whole panel reflects the time range the operator picked (5s … 10m).
     let top_dst: Vec<(String, Option<String>, i64)> = sqlx::query_as(
         "SELECT host(f.dst_addr)::text, COALESCE(ig.corr_country, f.dst_country), COALESCE(sum(f.octets),0)::bigint
          FROM flows f LEFT JOIN ip_geo ig ON ig.ip = f.dst_addr
-         WHERE f.recv_time > now() - interval '5 minutes'
+         WHERE f.recv_time > now() - make_interval(secs => $1)
            AND NOT (f.dst_addr <<= '10.0.0.0/8' OR f.dst_addr <<= '172.16.0.0/12'
                     OR f.dst_addr <<= '192.168.0.0/16' OR f.dst_addr <<= '224.0.0.0/4')
          GROUP BY f.dst_addr, COALESCE(ig.corr_country, f.dst_country) ORDER BY 3 DESC NULLS LAST LIMIT 8",
     )
+    .bind(window)
     .fetch_all(pg)
     .await
     .unwrap_or_default();
     let top_c: Vec<(String, i64)> = sqlx::query_as(
         "SELECT COALESCE(ig.corr_country, f.dst_country) AS cc, COALESCE(sum(f.octets),0)::bigint
          FROM flows f LEFT JOIN ip_geo ig ON ig.ip = f.dst_addr
-         WHERE f.recv_time > now() - interval '5 minutes' AND COALESCE(ig.corr_country, f.dst_country) IS NOT NULL
+         WHERE f.recv_time > now() - make_interval(secs => $1) AND COALESCE(ig.corr_country, f.dst_country) IS NOT NULL
          GROUP BY 1 ORDER BY 2 DESC LIMIT 6",
     )
+    .bind(window)
     .fetch_all(pg)
     .await
     .unwrap_or_default();
     // Top internal source hosts by traffic (who on the LAN is busy).
     let top_src: Vec<(String, i64)> = sqlx::query_as(
         "SELECT host(src_addr)::text, COALESCE(sum(octets),0)::bigint FROM flows
-         WHERE recv_time > now() - interval '5 minutes'
+         WHERE recv_time > now() - make_interval(secs => $1)
            AND (src_addr <<= '10.0.0.0/8' OR src_addr <<= '172.16.0.0/12' OR src_addr <<= '192.168.0.0/16')
          GROUP BY 1 ORDER BY 2 DESC LIMIT 6",
     )
+    .bind(window)
     .fetch_all(pg)
     .await
     .unwrap_or_default();
@@ -494,9 +486,10 @@ async fn stats_handler(
     // pair (the other side is an ephemeral port), so group by LEAST(src,dst).
     let top_port: Vec<(Option<i32>, i64)> = sqlx::query_as(
         "SELECT LEAST(src_port, dst_port) AS svc, COALESCE(sum(octets),0)::bigint FROM flows
-         WHERE recv_time > now() - interval '5 minutes' AND src_port IS NOT NULL AND dst_port IS NOT NULL
+         WHERE recv_time > now() - make_interval(secs => $1) AND src_port IS NOT NULL AND dst_port IS NOT NULL
          GROUP BY 1 ORDER BY 2 DESC LIMIT 6",
     )
+    .bind(window)
     .fetch_all(pg)
     .await
     .unwrap_or_default();
@@ -658,19 +651,25 @@ async fn timeline_handler(
     Json(json!({ "points": points, "bucket_s": bucket_s })).into_response()
 }
 
-// Top applications by traffic over the last 5 minutes, derived by joining the
-// cold-tier flows to the SNI-built ip_app classification on destination IP.
-async fn apps_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+// Top applications by traffic over the trailing `window` (same range as the rest
+// of the panel), derived by joining cold-tier flows to the SNI-built ip_app
+// classification on destination IP.
+async fn apps_handler(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<StatsQuery>,
+) -> impl IntoResponse {
     let Some(pg) = &state.pg else {
         return Json(json!({ "apps": [] })).into_response();
     };
+    let window = q.window.unwrap_or(60.0).clamp(1.0, 3600.0);
     let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(
         "SELECT a.app, mode() WITHIN GROUP (ORDER BY a.category) AS category,
                 COALESCE(sum(f.octets),0)::bigint, count(*)::bigint
          FROM flows f JOIN ip_app a ON a.ip = f.dst_addr
-         WHERE f.recv_time > now() - interval '5 minutes' AND a.app IS NOT NULL
+         WHERE f.recv_time > now() - make_interval(secs => $1) AND a.app IS NOT NULL
          GROUP BY a.app ORDER BY 3 DESC LIMIT 15",
     )
+    .bind(window)
     .fetch_all(pg)
     .await
     .unwrap_or_default();

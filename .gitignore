@@ -73,3 +73,6 @@ CLAUDE.md
 .claudeignore
 .mcp.json
 .ClaudeCodeMultiAccounts.json
+
+# PeeringDB-derived hubs (AUP: not redistributable) — local deployment only
+web/public/data/hubs.local.geojson

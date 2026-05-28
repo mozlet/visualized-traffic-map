@@ -417,6 +417,25 @@
   stroke: #f59e0b;
   stroke-width: 1;
 }
+.timeline .tl-cursor {
+  stroke: rgba(226, 232, 240, 0.7);
+  stroke-width: 1;
+  pointer-events: none;
+}
+.timeline .tl-tip {
+  position: absolute;
+  top: -2px;
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  font-size: 10px;
+  white-space: nowrap;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 5px;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  z-index: 2;
+}
 .timeline .tl-axis {
   display: flex;
   justify-content: space-between;
@@ -469,6 +488,22 @@
   background: linear-gradient(90deg, #0ea5e9, #22d3ee);
   border-radius: 4px;
 }
+/* Category bar colours — aligned to the color standard (web/src/colors.ts). */
+.bar-fill.cat-chat { background: #22c55e; }
+.bar-fill.cat-social { background: #16a34a; }
+.bar-fill.cat-video { background: #d946ef; }
+.bar-fill.cat-media { background: #c026d3; }
+.bar-fill.cat-search { background: #3b82f6; }
+.bar-fill.cat-browser { background: #0ea5e9; }
+.bar-fill.cat-cloud { background: #94a3b8; }
+.bar-fill.cat-cdn { background: #64748b; }
+.bar-fill.cat-dns { background: #818cf8; }
+.bar-fill.cat-os { background: #eab308; }
+.bar-fill.cat-os-update { background: #ca8a04; }
+.bar-fill.cat-shopping { background: #f97316; }
+.bar-fill.cat-finance { background: #14b8a6; }
+.bar-fill.cat-news { background: #ec4899; }
+.bar-fill.cat-dev { background: #a1a1aa; }
 .bar-v {
   width: 40px;
   text-align: right;

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DeckGL } from '@deck.gl/react';
-import { MapView, _GlobeView as GlobeView, FlyToInterpolator } from '@deck.gl/core';
+import { FlyToInterpolator } from '@deck.gl/core';
 import { useFlows } from './flowStream';
-import { borderLayer, cableLayer, endpointLayer, homeLayers, routesLayer, tripsLayer, PROTO_COLOR } from './layers';
+import { borderLayer, PROTO_COLOR } from './layers';
+import { MapCanvas } from './MapCanvas';
 import { fetchRoutes, type RoutePath } from './routes';
 import { loadLabels, labelLayers, searchPlaces } from './labels';
 import { terminatorLayers } from './terminator';
@@ -14,8 +14,6 @@ import { STR, PLACE_LANG, LANG_NAMES, initialLang, saveLang, type Lang } from '.
 import './App.css';
 
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
-const BASE_TRAVEL = 2200;
-const TRAIL = 700;
 // `null` label = use the translated "Other" string at render time; the rest are
 // universal protocol/service names that don't get translated.
 const PROTOS: [ProtoKey, string | null][] = [
@@ -63,6 +61,8 @@ const PORT_SVC: Record<number, string> = {
   500: 'IPsec', 1194: 'OpenVPN', 3389: 'RDP', 5228: 'GCM',
 };
 const portLabel = (p: number | null) => (p == null ? '—' : `${p}${PORT_SVC[p] ? ' ' + PORT_SVC[p] : ''}`);
+// Compact label for a stats window in seconds: 5→"5s", 60→"1m", 600→"10m".
+const fmtWin = (s: number) => (s % 60 === 0 ? `${s / 60}m` : `${s}s`);
 
 interface AppStat {
   app: string;
@@ -146,6 +146,10 @@ export default function App() {
     new URLSearchParams(location.search).get('view') === '3d' ? '3d' : '2d',
   );
   const [showCables, setShowCables] = useState(true);
+  const [cableColorful, setCableColorful] = useState(
+    () => localStorage.getItem('opnmap.cablecolor') === '1',
+  ); // off = single sky-400; on = real per-cable TeleGeography colours
+  useEffect(() => localStorage.setItem('opnmap.cablecolor', cableColorful ? '1' : '0'), [cableColorful]);
   const [showRoutes, setShowRoutes] = useState(false); // mtr paths off by default — opt-in overlay (avoids clutter)
   const [showLabels, setShowLabels] = useState(true);
   const [colorByApp, setColorByApp] = useState(false);
@@ -183,25 +187,25 @@ export default function App() {
     () => Object.fromEntries(SERVICES.map(([k]) => [k, true])) as Record<ServiceKey, boolean>,
   );
   const [showDdos, setShowDdos] = useState(true); // DDoS-flagged flows (red); off = hide them
-  const [, force] = useState(0);
-  const lastRef = useRef(0);
-  const epochRef = useRef(performance.now());
   const [clockStr, setClockStr] = useState('');
+  const [counts, setCounts] = useState({ showing: 0, cableRouted: 0 });
+  const [, force] = useState(0); // re-render on async label load / language change (not animation)
 
-  // ~30fps tick; pause simply stops re-rendering (freezes the frame).
+  // Stats-panel counts: recompute a couple times a second from the live buffer —
+  // decoupled from the 30fps canvas tick (which now lives in <MapCanvas>).
   useEffect(() => {
-    if (paused) return;
-    let raf = 0;
-    const loop = (t: number) => {
-      if (t - lastRef.current >= 33) {
-        force((x) => x + 1);
-        lastRef.current = t;
-      }
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [paused]);
+    const id = setInterval(() => {
+      const vis = flowsRef.current.filter(
+        (f) =>
+          (dir === 'all' || dirOf(f) === dir) &&
+          (f.flow.octets ?? 0) >= minBytes &&
+          enabledSvc[f.svc] &&
+          (showDdos || !f.ddos),
+      );
+      setCounts({ showing: vis.length, cableRouted: vis.filter((f) => f.snapped).length });
+    }, 500);
+    return () => clearInterval(id);
+  }, [dir, minBytes, enabledSvc, showDdos, flowsRef]);
 
   useEffect(() => {
     const fmt = () => {
@@ -252,20 +256,23 @@ export default function App() {
     }
   }, [range, refresh, replay, goLive]);
 
-  // Throughput window follows the chosen auto-refresh rate (5s → last 5s, …).
-  // Off → a steady 60s window polled every 5s.
+  // The stats window == the selected refresh interval, so the whole panel reflects
+  // the range the operator picked (5s … 10m); "off" defaults to 60s. NOTE: at
+  // sub-minute windows the throughput gauge can read 0 or spike — NetFlow exports
+  // long download flows in ~60s batches, so a short window may straddle a gap or a
+  // batch. The top-talker tables are byte totals and stay meaningful at any window.
   const statWin = refresh === '0' ? 60 : Number(refresh);
 
   // Live traffic stats (throughput, top talkers) — the all-traffic advantage.
   useEffect(() => {
-    const win = refresh === '0' ? 60 : Number(refresh);
+    const win = statWin;
     const pollMs = (refresh === '0' ? 5 : Number(refresh)) * 1000;
     const load = () => {
       fetch(`/api/stats?window=${win}`)
         .then((r) => r.json())
         .then(setLive)
         .catch(() => {});
-      fetch('/api/apps')
+      fetch(`/api/apps?window=${win}`)
         .then((r) => r.json())
         .then((d) => setApps(d.apps ?? []))
         .catch(() => {});
@@ -277,7 +284,7 @@ export default function App() {
     load();
     const id = setInterval(load, pollMs);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, statWin]);
 
   // Grid (3°) of recent flow-endpoint cells → drives traffic-relevant labels.
   // Refreshed slowly so labels don't churn every animation frame.
@@ -306,41 +313,14 @@ export default function App() {
     () => labelLayers(zoom, showLabels, activeRef.current),
     [zoom, showLabels, activeVer],
   );
-  const travelMs = BASE_TRAVEL / speed;
-  const currentTime = performance.now() - epochRef.current;
-
-  const visible = flowsRef.current.filter(
-    (f) =>
-      (dir === 'all' || dirOf(f) === dir) &&
-      (f.flow.octets ?? 0) >= minBytes &&
-      enabledSvc[f.svc] &&
-      (showDdos || !f.ddos),
-  );
-
-  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 700);
-  const homePos: [number, number] = [home.lon, home.lat];
-  const lifeMs = BASE_TRAVEL / speed + TRAIL;
   // Day/night terminator recomputed once a minute (the sun moves slowly).
   const minuteTick = Math.floor(Date.now() / 60000);
   const night = useMemo(() => (showNight ? terminatorLayers(new Date()) : []), [minuteTick, showNight]);
-  const layers = [
-    border,
-    ...night,
-    cableLayer(showCables),
-    routesLayer(routes, showRoutes),
-    endpointLayer(visible, performance.now(), lifeMs, enabled, colorByApp),
-    tripsLayer(visible, currentTime, epochRef.current, travelMs, TRAIL, enabled, colorByApp),
-    ...homeLayers(homePos, pulse),
-    ...labels,
-  ];
+  // Static layers (rebuilt only on their own inputs) handed to the canvas; the
+  // animated comet/endpoint layers are built per-frame inside <MapCanvas>.
+  const staticLayers = useMemo(() => [border, ...night, ...labels], [border, night, labels]);
+  const homePos: [number, number] = [home.lon, home.lat];
 
-  const view = useMemo(
-    () =>
-      mode === '3d'
-        ? new GlobeView({ controller: true })
-        : new MapView({ controller: true, repeat: true }),
-    [mode],
-  );
   // MUST be stable across renders — a fresh object each frame makes deck.gl
   // reset the camera 30x/sec and the globe becomes undraggable.
   const initialViewState = useMemo(() => {
@@ -376,6 +356,14 @@ export default function App() {
   const zoomBy = (d: number) =>
     setViewState((v) => ({ ...v, zoom: Math.max(0, Math.min(18, v.zoom + d)), transitionDuration: 250 }) as VS);
   const goHome = () => flyTo(home.lon, home.lat, Math.max(viewState.zoom, mode === '3d' ? 1.6 : 3));
+  // Track zoom (for label level-of-detail) without re-rendering 30×/s.
+  const handleViewState = (vs: VS) => {
+    if (Math.abs(vs.zoom - zoomRef.current) > 0.15) {
+      zoomRef.current = vs.zoom;
+      setZoom(vs.zoom);
+    }
+    setViewState(vs);
+  };
 
   // Timeline window follows the selected range (live → last hour). Brushing a
   // sub-window fetches that absolute slice and replays it.
@@ -400,45 +388,27 @@ export default function App() {
 
   return (
     <div className="root">
-      <DeckGL
-        views={view}
+      <MapCanvas
+        flowsRef={flowsRef}
+        staticLayers={staticLayers}
+        routes={routes}
+        home={homePos}
+        view={mode}
+        theme={theme}
         viewState={viewState}
-        onViewStateChange={(p) => {
-          (window as unknown as { __vs?: unknown }).__vs = p.viewState;
-          const vs = p.viewState as VS;
-          if (Math.abs(vs.zoom - zoomRef.current) > 0.15) {
-            zoomRef.current = vs.zoom;
-            setZoom(vs.zoom);
-          }
-          setViewState(vs);
-        }}
-        layers={layers}
-        pickingRadius={5}
-        getTooltip={({ object }) =>
-          object && (object as LiveFlow).flow
-            ? {
-                html: flowTip(object as LiveFlow),
-                style: {
-                  background: 'rgba(15,23,42,.95)',
-                  color: '#e2e8f0',
-                  fontSize: '11px',
-                  padding: '6px 8px',
-                  borderRadius: '6px',
-                  border: '1px solid rgba(148,163,184,.3)',
-                },
-              }
-            : null
-        }
-        style={{
-          background:
-            theme === 'light'
-              ? mode === '3d'
-                ? '#d3e2f2'
-                : '#e8eef5'
-              : mode === '3d'
-                ? '#05070f'
-                : '#0b1120',
-        }}
+        onViewStateChange={handleViewState}
+        paused={paused}
+        speed={speed}
+        dir={dir}
+        minBytes={minBytes}
+        enabled={enabled}
+        enabledSvc={enabledSvc}
+        showDdos={showDdos}
+        colorByApp={colorByApp}
+        showCables={showCables}
+        cableColorful={cableColorful}
+        showRoutes={showRoutes}
+        tooltip={flowTip}
       />
 
       <div className="panel brand">
@@ -576,6 +546,13 @@ export default function App() {
             </div>
             <div className="row">
               <span className="proto">
+                <span className="swatch" style={{ background: 'linear-gradient(90deg,#ed1b2c,#97b93c,#458bca)' }} />
+                {t.cableColor}
+              </span>
+              <span className={`toggle ${cableColorful ? 'on' : ''}`} onClick={() => setCableColorful((v) => !v)} />
+            </div>
+            <div className="row">
+              <span className="proto">
                 <span className="swatch" style={{ background: 'rgb(125,185,232)' }} />
                 {t.routes}
               </span>
@@ -641,10 +618,10 @@ export default function App() {
             {t.rate} <b>{stats.rate}</b> flows/s
           </div>
           <div>
-            {t.showing} <b>{visible.length}</b>
+            {t.showing} <b>{counts.showing}</b>
           </div>
           <div>
-            {t.cableRouted} <b>{visible.filter((f) => f.snapped).length}</b>
+            {t.cableRouted} <b>{counts.cableRouted}</b>
           </div>
           <div>
             {t.total} <b>{stats.total}</b>
@@ -654,10 +631,10 @@ export default function App() {
 
       <DraggablePanel id="livestats" className="livestats" title={t.statsPanel} maxBody="calc(100vh - 80px)">
         <div className="bw">{fmtBps(live.bps)}</div>
-        <div className="bwlbl">{t.bandwidth} {statWin}s</div>
+        <div className="bwlbl">{t.bandwidth} {fmtWin(statWin)}</div>
         {live.top_countries.length > 0 && (
           <>
-            <h3>{t.dstCountries}</h3>
+            <h3>{t.dstCountries} · {fmtWin(statWin)}</h3>
             {live.top_countries.map((c) => {
               const max = live.top_countries[0]?.bytes || 1;
               return (
@@ -674,7 +651,7 @@ export default function App() {
         )}
         {apps.length > 0 && (
           <>
-            <h3>{t.appsPanel}</h3>
+            <h3>{t.appsPanel} · {fmtWin(statWin)}</h3>
             {apps.slice(0, 8).map((a) => {
               const max = apps[0]?.bytes || 1;
               return (

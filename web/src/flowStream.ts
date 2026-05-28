@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flowPath, loadCables } from './cables';
-import { routeMap } from './routes';
+import { loadHubs } from './hubs';
+import { loadLandmass } from './landmass';
 import type { Flow, HomeConfig, LiveFlow, ProtoKey, ServiceKey } from './types';
 
 const MAX_FLOWS = 4000;
 const DDOS_WINDOW_MS = 60_000;
 const DDOS_SRC_THRESHOLD = 30; // distinct sources to one dst within the window
+
+// Visual density ∝ bytes: one comet per ~PARTICLE_BYTES so a heavy flow becomes a
+// sustained stream and a trivial flow a single dot — the map then reflects real
+// throughput, not flow count. Comets stream over the flow's active span (bounded)
+// so a sustained download reads as a continuous river from its source.
+const PARTICLE_BYTES = 4_000_000;
+const PARTICLE_MAX = 64;
+const STREAM_MIN_MS = 1500;
+const STREAM_MAX_MS = 24_000;
 
 // Rolling distinct-source count per destination — a volumetric/DDoS indicator.
 const dstSources = new Map<string, Map<string, number>>();
@@ -80,21 +90,17 @@ function toLive(flow: Flow, born: number): LiveFlow | null {
   if (src[0] === dst[0] && src[1] === dst[1]) return null; // truly degenerate
   const octets = flow.octets ?? 0;
 
-  // Prefer the real mtr-measured path to a public dst; else cable-snap/great-circle.
-  const realPts = !d.is_home ? routeMap.get(flow.dst_addr) : undefined;
-  let path: [number, number][];
-  let snapped: boolean;
-  let real = false;
-  if (realPts && realPts.length >= 2) {
-    // routeMap polylines are already great-circle densified + unwrapped at load.
-    path = realPts;
-    snapped = true;
-    real = true;
-  } else {
-    const r = flowPath(src, dst);
-    path = r.path;
-    snapped = r.snapped;
-  }
+  // ALL flow paths go through the data-driven segmentPath (continent + cable
+  // graph). mtr's measured hop polyline must NOT be used as flow geometry — mtr
+  // hop coords are MaxMind AS-default PoPs (郑州 113.7,34.8 / 北京 116.4,39.9)
+  // and trailing private-IP hops, so painting them as a literal polyline draws
+  // bogus jumps (a SanJose flow truncated at 郑州, a Bristol flow detouring through
+  // Florida). routes.ts still computes routeMap for the optional /routes overlay
+  // — it doesn't drive a flow's path here.
+  const r = flowPath(src, dst);
+  const path = r.path;
+  const snapped = r.snapped;
+  const real = false;
 
   const ddos = ddosScore(flow.dst_addr, flow.src_addr, born);
 
@@ -135,10 +141,22 @@ export function useFlows() {
   const lastMsgRef = useRef(performance.now());
 
   const push = useCallback((flow: Flow) => {
-    const lf = toLive(flow, performance.now());
-    if (!lf) return;
+    const base = toLive(flow, performance.now());
+    if (!base) return;
     const buf = flowsRef.current;
-    buf.push(lf);
+    // Spawn comets ∝ bytes, staggered across the flow's real active span so heavy
+    // sources stream continuously. One toLive() call (DDoS scored once), then clones.
+    const octets = flow.octets ?? 0;
+    const n = Math.max(1, Math.min(PARTICLE_MAX, Math.round(octets / PARTICLE_BYTES)));
+    const durMs =
+      flow.flow_start != null && flow.flow_finish != null
+        ? Math.abs(flow.flow_finish - flow.flow_start)
+        : 0;
+    const spread = n <= 1 ? 0 : Math.max(STREAM_MIN_MS, Math.min(STREAM_MAX_MS, durMs || n * 200));
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) {
+      buf.push(i === 0 ? base : { ...base, born: t0 + (i / n) * spread });
+    }
     if (buf.length > MAX_FLOWS) buf.splice(0, buf.length - MAX_FLOWS);
     totalRef.current += 1;
     rateWindow.current.push(performance.now());
@@ -180,7 +198,10 @@ export function useFlows() {
     let closed = false;
 
     (async () => {
-      await loadCables(); // ready before we build any flow paths
+      await Promise.all([loadCables(), loadHubs(), loadLandmass()]); // ready before we build any flow paths
+      // Drop any flows goLive() pushed before the data was ready (their paths are
+      // provisional straight lines); the recent fetch below refills them correctly.
+      flowsRef.current = [];
       try {
         const cfg = await (await fetch('/api/config')).json();
         if (cfg.home) {

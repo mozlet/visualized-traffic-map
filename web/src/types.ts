@@ -16,6 +16,8 @@ export interface Flow {
   octets?: number | null;
   packets?: number | null;
   recv_sec?: number | null;
+  flow_start?: number | null; // exporter clock (ms); finish-start = real active span
+  flow_finish?: number | null;
   src_geo?: Geo | null;
   dst_geo?: Geo | null;
   app?: string | null; // SNI-derived application (ip_app), stamped by the API

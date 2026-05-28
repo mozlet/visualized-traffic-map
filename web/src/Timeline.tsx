@@ -44,6 +44,7 @@ export function Timeline({
 }) {
   const [pts, setPts] = useState<Pt[]>([]);
   const [sel, setSel] = useState<[number, number] | null>(null); // fractions 0..1
+  const [hover, setHover] = useState<number | null>(null); // fraction under cursor
   const dragRef = useRef<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -66,14 +67,19 @@ export function Timeline({
   };
   const tAt = (f: number) => (pts.length ? pts[Math.min(pts.length - 1, Math.floor(f * pts.length))].t : 0);
 
+  const bucketS = windowS / n;
   const down = (e: React.MouseEvent) => {
     const f = frac(e);
     dragRef.current = f;
     setSel([f, f]);
   };
   const move = (e: React.MouseEvent) => {
-    if (dragRef.current == null) return;
-    setSel([dragRef.current, frac(e)]);
+    const f = frac(e);
+    if (dragRef.current != null) {
+      setSel([dragRef.current, f]);
+      return;
+    }
+    setHover(f);
   };
   const up = (e: React.MouseEvent) => {
     if (dragRef.current == null) return;
@@ -81,13 +87,25 @@ export function Timeline({
     const a = Math.min(dragRef.current, f);
     const b = Math.max(dragRef.current, f);
     dragRef.current = null;
-    if (b - a > 0.01 && pts.length) {
+    if (!pts.length) return setSel(null);
+    if (b - a > 0.01) {
+      // drag → replay the brushed window
       setSel([a, b]);
-      onBrush(tAt(a), tAt(b) + windowS / n);
-    } else {
-      setSel(null);
+      onBrush(tAt(a), tAt(b) + bucketS);
+      return;
     }
+    // single click → seek: replay a window centred on the clicked bucket
+    const t = tAt(f);
+    const win = Math.max(windowS / 12, bucketS * 3);
+    const half = win / 2 / windowS; // window half-width as a 0..1 fraction
+    setSel([f - half, f + half]);
+    onBrush(t - win / 2, t + win / 2 + bucketS);
   };
+  const leave = (e: React.MouseEvent) => {
+    setHover(null);
+    if (dragRef.current != null) up(e);
+  };
+  const hp = hover != null && pts.length ? pts[Math.min(pts.length - 1, Math.floor(hover * pts.length))] : null;
 
   const ticks = pts.length
     ? [0, 0.25, 0.5, 0.75, 1].map((f) => ({
@@ -102,6 +120,11 @@ export function Timeline({
         <span>{label}</span>
         <span className="tl-peak">↥ {fmtBps(max)}bps</span>
       </div>
+      {hp && (
+        <div className="tl-tip" style={{ left: `${Math.min(0.98, Math.max(0.02, hover ?? 0)) * 100}%` }}>
+          {fmtTick(hp.t, windowS, timeLocal, hour12)} · {fmtBps(hp.bps)}bps
+        </div>
+      )}
       <svg
         ref={svgRef}
         preserveAspectRatio="none"
@@ -109,7 +132,7 @@ export function Timeline({
         onMouseDown={down}
         onMouseMove={move}
         onMouseUp={up}
-        onMouseLeave={up}
+        onMouseLeave={leave}
       >
         {[0.25, 0.5, 0.75].map((g) => (
           <line key={g} className="tl-grid" x1={g * n} y1={0} x2={g * n} y2={100} vectorEffect="non-scaling-stroke" />
@@ -127,6 +150,9 @@ export function Timeline({
             height={100}
             vectorEffect="non-scaling-stroke"
           />
+        )}
+        {hover != null && (
+          <line className="tl-cursor" x1={hover * n} y1={0} x2={hover * n} y2={100} vectorEffect="non-scaling-stroke" />
         )}
       </svg>
       <div className="tl-axis">
