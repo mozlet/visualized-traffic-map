@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlyToInterpolator } from '@deck.gl/core';
 import { useFlows } from './flowStream';
-import { borderLayer, PROTO_COLOR } from './layers';
+import { borderLayer, stateLayer, PROTO_COLOR } from './layers';
 import { MapCanvas } from './MapCanvas';
 import { fetchRoutes, type RoutePath } from './routes';
 import { loadLabels, labelLayers, searchPlaces } from './labels';
@@ -308,6 +308,13 @@ export default function App() {
   }, []);
 
   const border = useMemo(() => borderLayer(theme), [theme]);
+  // State/province borders fade in when zoomed into a region (gated by 0.1-zoom
+  // bucket so it doesn't rebuild every pixel of a zoom gesture).
+  const zoomBucket = Math.round(zoom * 10) / 10;
+  const states = useMemo(
+    () => (showLabels ? stateLayer(theme, zoomBucket) : []),
+    [theme, zoomBucket, showLabels],
+  );
   // Labels rebuild only on zoom / toggle / active-traffic change — not per frame.
   const labels = useMemo(
     () => labelLayers(zoom, showLabels, activeRef.current),
@@ -318,7 +325,10 @@ export default function App() {
   const night = useMemo(() => (showNight ? terminatorLayers(new Date()) : []), [minuteTick, showNight]);
   // Static layers (rebuilt only on their own inputs) handed to the canvas; the
   // animated comet/endpoint layers are built per-frame inside <MapCanvas>.
-  const staticLayers = useMemo(() => [border, ...night, ...labels], [border, night, labels]);
+  const staticLayers = useMemo(
+    () => [border, ...states, ...night, ...labels],
+    [border, states, night, labels],
+  );
   const homePos: [number, number] = [home.lon, home.lat];
 
   // MUST be stable across renders — a fresh object each frame makes deck.gl

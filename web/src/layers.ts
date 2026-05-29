@@ -23,6 +23,31 @@ export function borderLayer(theme: 'dark' | 'light' = 'dark'): Layer {
   });
 }
 
+// State / province (Natural Earth admin-1) borders — a finer basemap tier that
+// fades in only when zoomed into a region, so the global view stays clean. Data
+// is lazily fetched the first time this layer is created (zoomed-in). Borders
+// only (no fill); thinner & dimmer than country borders so the hierarchy reads.
+export function stateLayer(theme: 'dark' | 'light', zoom: number): Layer[] {
+  if (zoom < 3.6) return []; // only when zoomed into a region
+  const light = theme === 'light';
+  // Fade the borders in across zoom 3.6→5 so they appear gently, then hold.
+  const a = Math.round(Math.max(0, Math.min(1, (zoom - 3.6) / 1.4)) * (light ? 170 : 150));
+  return [
+    new GeoJsonLayer({
+      id: 'states',
+      data: '/data/states.geojson',
+      stroked: true,
+      filled: false,
+      getLineColor: light ? [100, 116, 139, a] : [130, 150, 185, a],
+      lineWidthMinPixels: 0.7,
+      lineWidthUnits: 'pixels',
+      getLineWidth: 0.7,
+      pickable: false,
+      parameters: { depthTest: false },
+    }),
+  ];
+}
+
 // Real measured mtr paths (faint static polylines under the live comets).
 export function routesLayer(routes: RoutePath[], visible: boolean): Layer {
   return new PathLayer<RoutePath>({

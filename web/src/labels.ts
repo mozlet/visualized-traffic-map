@@ -91,8 +91,12 @@ export function searchPlaces(q: string, limit = 8): { text: string; position: [n
 export function labelLayers(zoom: number, visible: boolean, active: Set<string>): Layer[] {
   if (!ready || !visible || zoom < HIDE_BELOW) return [];
   const zoomedIn = zoom >= 4.2;
+  // Reveal progressively more (smaller) towns as the user zooms in. The reveal
+  // budget widens with zoom (was a flat +1.2), so deep zoom shows the town tier
+  // (mz up to 9 in the dataset) instead of stopping at regional cities.
+  const reveal = zoom < 4 ? 1.2 : 1.2 + (zoom - 4) * 0.9;
   const placeData = places.filter(
-    (p) => p.mz <= zoom + 1.2 && (zoomedIn || cellNear(active, p.position)),
+    (p) => p.mz <= zoom + reveal && (zoomedIn || cellNear(active, p.position)),
   );
   const countryData = countries.filter((c) => zoomedIn || cellNear(active, c.position));
   const common = {
