@@ -201,8 +201,43 @@ function getPMT(): PMTiles {
   return pmtilesInst;
 }
 const OSM_MIN_ZOOM = 9; // below this, the global GeoJSON basemap is enough
-export function osmBaseLayer(visible: boolean, zoom: number, langField = 'name:en'): Layer[] {
+// Label-density gate: at z<OSM_DENSE_ZOOM the viewport is wide enough that the
+// raw OSM CN villages flood the screen, so we restrict place/street labels to
+// fine-cells with active flow. At z≥OSM_DENSE_ZOOM the viewport is tight and the
+// label count naturally falls, so we render everything (so the user can read the
+// area they zoomed all the way in to).
+const OSM_DENSE_ZOOM = 12;
+const OSM_LABEL_GRID = 0.2; // ~22 km cells; pairs with App.tsx activeFineRef
+export function osmBaseLayer(
+  visible: boolean,
+  zoom: number,
+  langField = 'name:en',
+  active?: Set<string>,
+): Layer[] {
   if (!visible || zoom < OSM_MIN_ZOOM) return [];
+  const labelGate = !!active && active.size > 0 && zoom < OSM_DENSE_ZOOM;
+  // Exact-cell match only (≈ 22 km square). The previous 3x3 halo (~60 km) let
+  // every CN village within ~30km of home through, which at the user's home view
+  // (z=10, viewport ≈ 30 km wide) included basically the whole screen — i.e.
+  // no filter at all. Single-cell match keeps the screen readable: only the
+  // 0.2° tile that *contains* an endpoint shows its labels.
+  const nearActive = (pos: [number, number]): boolean => {
+    if (!labelGate) return true;
+    const cx = Math.round(pos[0] / OSM_LABEL_GRID);
+    const cy = Math.round(pos[1] / OSM_LABEL_GRID);
+    return active!.has(`${cx},${cy}`);
+  };
+  // Place-class density tiers — CN OSM tags every settlement down to single-
+  // farmhouse hamlets, which at z=9–11 fire hundreds of overlapping labels.
+  // At mid-zoom show only real cities/towns; villages/hamlets/neighbourhoods
+  // only fade in at z≥OSM_DENSE_ZOOM (street zoom, viewport small enough that
+  // they no longer pile up).
+  const placeClassesAtZoom = (z: number): Set<string> =>
+    z >= OSM_DENSE_ZOOM
+      ? new Set(['country', 'state', 'province', 'city', 'town', 'village',
+                 'hamlet', 'suburb', 'neighbourhood', 'locality'])
+      : new Set(['country', 'state', 'province', 'city', 'town']);
+  const allowedPlaceClasses = placeClassesAtZoom(zoom);
   return [
     new TileLayer({
       id: 'osm-pmtiles',
@@ -242,10 +277,9 @@ export function osmBaseLayer(visible: boolean, zoom: number, langField = 'name:e
             ? raw
             : (raw.features ?? []);
 
-        const PLACE_CLS = new Set([
-          'country', 'state', 'province', 'city', 'town', 'village',
-          'hamlet', 'suburb', 'neighbourhood', 'locality',
-        ]);
+        // Zoom-aware: at street-zoom (≥OSM_DENSE_ZOOM) include village/hamlet/
+        // suburb/neighbourhood/locality; at lower zoom only city/town survive.
+        const PLACE_CLS = allowedPlaceClasses;
         const ROAD_CLS = new Set([
           'motorway', 'trunk', 'primary', 'secondary', 'tertiary',
           'minor', 'service', 'residential', 'track', 'path', 'pedestrian', 'rail',
@@ -368,11 +402,13 @@ export function osmBaseLayer(visible: boolean, zoom: number, langField = 'name:e
             lineWidthUnits: 'pixels',
             pickable: false,
           }),
-          // Place name labels (cities, neighbourhoods)
+          // Place name labels (cities, neighbourhoods) — gated to active-flow
+          // cells at medium zoom (see nearActive). Roads/water/buildings stay
+          // unfiltered: they're the basemap, dropping them would leave gaps.
           new TextLayer({
             ...props,
             id: `${props.id}-place-labels`,
-            data: named(isPlace) as unknown[],
+            data: named(isPlace).filter((f) => nearActive(labelPos(f))) as unknown[],
             getPosition: labelPos as unknown as (f: unknown) => [number, number],
             getText: nameOf as unknown as (f: unknown) => string,
             getSize: 11,
@@ -391,7 +427,7 @@ export function osmBaseLayer(visible: boolean, zoom: number, langField = 'name:e
           new TextLayer({
             ...props,
             id: `${props.id}-street-labels`,
-            data: named(isRoad) as unknown[],
+            data: named(isRoad).filter((f) => nearActive(labelPos(f))) as unknown[],
             getPosition: labelPos as unknown as (f: unknown) => [number, number],
             getText: nameOf as unknown as (f: unknown) => string,
             getSize: 9,
@@ -408,7 +444,7 @@ export function osmBaseLayer(visible: boolean, zoom: number, langField = 'name:e
           new TextLayer({
             ...props,
             id: `${props.id}-housenumbers`,
-            data: by(isHousenumber) as unknown[],
+            data: by(isHousenumber).filter((f) => nearActive(labelPos(f))) as unknown[],
             getPosition: labelPos as unknown as (f: unknown) => [number, number],
             getText: ((f: Feat) => (f.properties.housenumber as string | undefined) || '') as unknown as (f: unknown) => string,
             getSize: 8,

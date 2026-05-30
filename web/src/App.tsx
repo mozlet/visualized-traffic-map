@@ -290,20 +290,29 @@ export default function App() {
     return () => clearInterval(id);
   }, [refresh, statWin]);
 
-  // Grid (3°) of recent flow-endpoint cells → drives traffic-relevant labels.
-  // Refreshed slowly so labels don't churn every animation frame.
+  // Two grids of recent flow-endpoint cells, both refreshed slowly so labels
+  // don't churn every animation frame:
+  //   • coarse 3°  → drives Natural Earth low-zoom country/state/city labels
+  //     (declutter the globe to traffic-touched regions)
+  //   • fine 0.2° (~22km) → drives PMTiles street-zoom label gating, so a
+  //     deep-zoomed view doesn't try to render every village in OSM CN
   const activeRef = useRef<Set<string>>(new Set());
+  const activeFineRef = useRef<Set<string>>(new Set());
   const [activeVer, setActiveVer] = useState(0);
   useEffect(() => {
     const tick = () => {
       const g = new Set<string>();
+      const gf = new Set<string>();
       const now = performance.now();
       for (const f of flowsRef.current) {
         if (now - f.born > 60000) continue;
         g.add(`${Math.round(f.dst[0] / 3)},${Math.round(f.dst[1] / 3)}`);
         g.add(`${Math.round(f.src[0] / 3)},${Math.round(f.src[1] / 3)}`);
+        gf.add(`${Math.round(f.dst[0] / 0.2)},${Math.round(f.dst[1] / 0.2)}`);
+        gf.add(`${Math.round(f.src[0] / 0.2)},${Math.round(f.src[1] / 0.2)}`);
       }
       activeRef.current = g;
+      activeFineRef.current = gf;
       setActiveVer((v) => v + 1);
     };
     tick();
@@ -323,8 +332,8 @@ export default function App() {
   // labels follow the UI language via PMT_LANG (falls through to name:latin if
   // the tileset doesn't include that language).
   const osm = useMemo(
-    () => osmBaseLayer(showLabels, zoomBucket, PMT_LANG[lang]),
-    [showLabels, zoomBucket, lang],
+    () => osmBaseLayer(showLabels, zoomBucket, PMT_LANG[lang], activeFineRef.current),
+    [showLabels, zoomBucket, lang, activeVer],
   );
   // Labels rebuild only on zoom / toggle / active-traffic change — not per frame.
   const labels = useMemo(
