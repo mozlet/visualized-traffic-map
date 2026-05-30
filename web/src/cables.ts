@@ -378,15 +378,16 @@ export function segmentPath(
     const lr = landRoute(a, b);
     result = { path: densifyPath(lr ?? [a, b]), snapped: false };
   } else {
-    // Different landmass → real submarine cable shortest path; the hub backbone
-    // carries each end's access leg from the endpoint to its entry/exit landing.
+    // Different landmass → real submarine cable shortest path. Each endpoint
+    // reaches its own NEAREST cable landing (route[0]/route[-1]) directly — that
+    // landing is the coast the flow boards from, so the access leg is a straight
+    // hop to the coast, not an inland-hub detour. (Routing the access through the
+    // hub graph dragged a NE-China home WEST to an inland hub and back across the
+    // Bohai before it could egress; going straight to the nearest landing fixes
+    // that while staying on real infrastructure for the ocean + foreign legs.)
     const route = cableRoute(a, b);
     if (route && route.length >= 2) {
-      const enter = route[0];
-      const exit = route[route.length - 1];
-      const aLeg = landRoute(a, enter) ?? [a, enter];
-      const bLeg = landRoute(exit, b) ?? [exit, b];
-      const path = densifyPath([...aLeg, ...route.slice(1, -1), ...bLeg]);
+      const path = densifyPath([a, ...route, b]);
       result = { path, snapped: true };
     } else {
       // The cable dataset doesn't connect these two — last-resort straight line.

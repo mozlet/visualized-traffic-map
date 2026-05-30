@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlyToInterpolator } from '@deck.gl/core';
 import { useFlows } from './flowStream';
-import { borderLayer, stateLayer, PROTO_COLOR } from './layers';
+import { borderLayer, stateLayer, osmBaseLayer, PROTO_COLOR } from './layers';
 import { MapCanvas } from './MapCanvas';
 import { fetchRoutes, type RoutePath } from './routes';
 import { loadLabels, labelLayers, searchPlaces } from './labels';
@@ -173,6 +173,10 @@ export default function App() {
   }, [unitIEC]);
   const [zoom, setZoom] = useState(1.6);
   const zoomRef = useRef(1.6);
+  // Bucketed view center (0.2°) — drives viewport culling of the dense town tier
+  // without rebuilding labels on every pixel of a pan.
+  const [center, setCenter] = useState<[number, number]>([0, 0]);
+  const centerRef = useRef<[number, number]>([0, 0]);
   const [routes, setRoutes] = useState<RoutePath[]>([]);
   const [live, setLive] = useState<LiveStats>({ bps: 0, top_dst: [], top_countries: [] });
   const [apps, setApps] = useState<AppStat[]>([]);
@@ -315,10 +319,12 @@ export default function App() {
     () => (showLabels ? stateLayer(theme, zoomBucket) : []),
     [theme, zoomBucket, showLabels],
   );
+  // OSM street-level basemap (Protomaps PMTiles) fades in deep-zoomed.
+  const osm = useMemo(() => osmBaseLayer(showLabels, zoomBucket), [showLabels, zoomBucket]);
   // Labels rebuild only on zoom / toggle / active-traffic change — not per frame.
   const labels = useMemo(
-    () => labelLayers(zoom, showLabels, activeRef.current),
-    [zoom, showLabels, activeVer],
+    () => labelLayers(zoom, showLabels, activeRef.current, center),
+    [zoom, showLabels, activeVer, center],
   );
   // Day/night terminator recomputed once a minute (the sun moves slowly).
   const minuteTick = Math.floor(Date.now() / 60000);
@@ -326,8 +332,8 @@ export default function App() {
   // Static layers (rebuilt only on their own inputs) handed to the canvas; the
   // animated comet/endpoint layers are built per-frame inside <MapCanvas>.
   const staticLayers = useMemo(
-    () => [border, ...states, ...night, ...labels],
-    [border, states, night, labels],
+    () => [border, ...states, ...osm, ...night, ...labels],
+    [border, states, osm, night, labels],
   );
   const homePos: [number, number] = [home.lon, home.lat];
 
@@ -371,6 +377,12 @@ export default function App() {
     if (Math.abs(vs.zoom - zoomRef.current) > 0.15) {
       zoomRef.current = vs.zoom;
       setZoom(vs.zoom);
+    }
+    const cl = Math.round(vs.longitude * 5) / 5;
+    const ca = Math.round(vs.latitude * 5) / 5;
+    if (cl !== centerRef.current[0] || ca !== centerRef.current[1]) {
+      centerRef.current = [cl, ca];
+      setCenter([cl, ca]);
     }
     setViewState(vs);
   };

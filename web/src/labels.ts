@@ -19,10 +19,18 @@ interface RawFeature {
 
 let places: Place[] = [];
 let countries: Place[] = [];
+let towns: Place[] = []; // denser global gazetteer (GeoNames), single name, by population
 let ready = false;
 let placesRaw: RawFeature[] = [];
 let countriesRaw: RawFeature[] = [];
 let curField = '';
+// Pre-baked character set spanning every label text we'll ever ask deck.gl to
+// render. With characterSet:'auto' the atlas only contains the chars present in
+// the FIRST frame's data, and panning to a new viewport that introduces new CJK
+// characters then triggers per-char "Missing character" warnings while the
+// atlas asynchronously rebuilds — and those characters render blank on the
+// first frame they appear. Baking the full set up front avoids both.
+let charSet = '';
 
 // Re-derive label text for a given GeoJSON name field (e.g. n_en / n_zh).
 function derive(field: string): void {
@@ -40,6 +48,11 @@ function derive(field: string): void {
     .map((ft) => ({ position: ft.geometry.coordinates, text: text(ft), mz: 0, cap: false }))
     .filter((p) => p.text);
   curField = field;
+  const chars = new Set<string>();
+  for (const p of places) for (const ch of p.text) chars.add(ch);
+  for (const c of countries) for (const ch of c.text) chars.add(ch);
+  for (const t of towns) for (const ch of t.text) chars.add(ch);
+  charSet = [...chars].join('');
   ready = true;
 }
 
@@ -51,6 +64,18 @@ export async function loadLabels(field: string): Promise<void> {
       placesRaw = pj.features ?? [];
       const cj = await (await fetch('/data/country-labels.geojson')).json();
       countriesRaw = cj.features ?? [];
+      // Denser global town tier (GeoNames). Single `n` name (gazetteer has no
+      // curated 12-lang set at this density); min-zoom derived from population so
+      // bigger towns surface first as the user zooms in. Shown only deep-zoomed and
+      // viewport-culled (see labelLayers), so the rendered count stays small.
+      const tj = await (await fetch('/data/towns.geojson')).json();
+      towns = (tj.features ?? [])
+        .map((ft: { properties: { n: string; p: number }; geometry: { coordinates: [number, number] } }) => {
+          const p = ft.properties.p || 0;
+          const mz = p >= 5e5 ? 7 : p >= 1.5e5 ? 8 : p >= 5e4 ? 9 : 10;
+          return { position: ft.geometry.coordinates, text: ft.properties.n, mz, cap: false };
+        })
+        .filter((t: Place) => t.text);
     } catch (e) {
       console.warn('labels load failed', e);
       return;
@@ -88,7 +113,17 @@ export function searchPlaces(q: string, limit = 8): { text: string; position: [n
   return out.slice(0, limit);
 }
 
-export function labelLayers(zoom: number, visible: boolean, active: Set<string>): Layer[] {
+// Below this zoom the dense town tier stays hidden; above it, towns near the
+// current view fade in (the "more detail as you zoom" tier, global).
+const TOWN_MIN_ZOOM = 6.5;
+const TOWN_MAX = 700; // hard cap on rendered town labels (perf safety)
+
+export function labelLayers(
+  zoom: number,
+  visible: boolean,
+  active: Set<string>,
+  center?: [number, number],
+): Layer[] {
   if (!ready || !visible || zoom < HIDE_BELOW) return [];
   const zoomedIn = zoom >= 4.2;
   // Reveal progressively more (smaller) towns as the user zooms in. The reveal
@@ -99,16 +134,43 @@ export function labelLayers(zoom: number, visible: boolean, active: Set<string>)
     (p) => p.mz <= zoom + reveal && (zoomedIn || cellNear(active, p.position)),
   );
   const countryData = countries.filter((c) => zoomedIn || cellNear(active, c.position));
+  // Dense town tier: only deep-zoomed, only near the current view, only towns whose
+  // population-min-zoom has been reached — then capped, biggest-first. This keeps a
+  // few hundred labels on screen no matter that the dataset is 33k global towns.
+  let townData: Place[] = [];
+  if (zoom >= TOWN_MIN_ZOOM && center) {
+    const span = (360 / 2 ** zoom) * 1.5; // ~visible half-width in degrees
+    townData = towns
+      .filter(
+        (t) =>
+          t.mz <= zoom + reveal &&
+          Math.abs(t.position[0] - center[0]) < span &&
+          Math.abs(t.position[1] - center[1]) < span,
+      )
+      .sort((a, b) => a.mz - b.mz) // bigger towns (lower mz) first
+      .slice(0, TOWN_MAX);
+  }
   const common = {
     fontFamily: '"Noto Sans CJK SC", ui-sans-serif, system-ui, sans-serif',
     getTextAnchor: 'middle' as const,
     getAlignmentBaseline: 'center' as const,
     background: true,
     backgroundPadding: [3, 1] as [number, number],
-    characterSet: 'auto' as const,
+    characterSet: charSet,
     sizeUnits: 'pixels' as const,
   };
   return [
+    new TextLayer<Place>({
+      id: 'town-labels', // under city/country labels (rendered first), dimmer & smaller
+      data: townData,
+      getPosition: (d) => d.position,
+      getText: (d) => d.text,
+      getSize: 10,
+      getColor: [148, 163, 184, 175],
+      getBackgroundColor: [10, 14, 22, 120],
+      fontWeight: 400,
+      ...common,
+    }),
     new TextLayer<Place>({
       id: 'country-labels',
       data: countryData,

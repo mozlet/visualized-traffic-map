@@ -1,6 +1,8 @@
-import { GeoJsonLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
-import { TripsLayer } from '@deck.gl/geo-layers';
+import { GeoJsonLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
+import { TileLayer, TripsLayer } from '@deck.gl/geo-layers';
+import { MVTLoader } from '@loaders.gl/mvt';
 import type { Layer } from '@deck.gl/core';
+import { PMTiles } from 'pmtiles';
 import type { LiveFlow, ProtoKey } from './types';
 import type { RoutePath } from './routes';
 import { flowColor, parseHex } from './colors';
@@ -187,4 +189,226 @@ export function tripsLayer(
       getColor: [byCat, light],
     },
   });
+}
+
+// OSM street-level basemap (Protomaps PMTiles, vector). One .pmtiles file
+// served as a single static asset (HTTP Range Requests stream tiles on demand),
+// no tile-server process. Local/LAN only — no external CDN. Gated to higher zoom
+// so the existing low-zoom basemap (countries/states/cables) stays clean.
+let pmtilesInst: PMTiles | null = null;
+function getPMT(): PMTiles {
+  if (!pmtilesInst) pmtilesInst = new PMTiles('/data/liaoning.pmtiles');
+  return pmtilesInst;
+}
+const OSM_MIN_ZOOM = 9; // below this, the global GeoJSON basemap is enough
+export function osmBaseLayer(visible: boolean, zoom: number): Layer[] {
+  if (!visible || zoom < OSM_MIN_ZOOM) return [];
+  return [
+    new TileLayer({
+      id: 'osm-pmtiles',
+      minZoom: OSM_MIN_ZOOM,
+      maxZoom: 14, // tilemaker source's maxzoom; deck.gl over-zooms beyond
+      tileSize: 256,
+      getTileData: async ({ index }: { index: { x: number; y: number; z: number } }) => {
+        const t = await getPMT().getZxy(index.z, index.x, index.y);
+        if (!t) return null;
+        // MVT bytes → GeoJSON Feature array in wgs84 (one shot per tile).
+        // `shape: 'geojson'` is required in loaders.gl v4+; without it the loader
+        // throws "undefined shape" before parsing any geometry.
+        return await MVTLoader.parse(t.data, {
+          mvt: {
+            shape: 'geojson',
+            coordinates: 'wgs84',
+            tileIndex: { x: index.x, y: index.y, z: index.z },
+          },
+        });
+      },
+      renderSubLayers: (props: { id: string; data: unknown }) => {
+        // MVTLoader (geojson shape) doesn't propagate the source-layer name.
+        // What DOES survive on every feature: `properties.class` (OpenMapTiles
+        // taxonomy — motorway/village/lake/…) and whichever name fields tilemaker
+        // included. This tileset has only `name:latin` (no `name`, no
+        // `name:zh-Hans`, no `render_height`, no `housenumber`), so `nameOf()`
+        // falls through to `name:latin`; `isBuilding` / `isHousenumber` simply
+        // produce empty layers here and would activate against a richer preset.
+        type Feat = {
+          properties: {
+            class?: string;
+            name?: string;
+            'name:latin'?: string;
+            'name:zh-Hans'?: string;
+            housenumber?: string;
+            render_height?: number;
+          };
+          geometry: { type: string; coordinates: unknown };
+        };
+        const raw = props.data as { features?: Feat[] } | Feat[] | null;
+        const feats: Feat[] = !raw
+          ? []
+          : Array.isArray(raw)
+            ? raw
+            : (raw.features ?? []);
+
+        const PLACE_CLS = new Set([
+          'country', 'state', 'province', 'city', 'town', 'village',
+          'hamlet', 'suburb', 'neighbourhood', 'locality',
+        ]);
+        const ROAD_CLS = new Set([
+          'motorway', 'trunk', 'primary', 'secondary', 'tertiary',
+          'minor', 'service', 'residential', 'track', 'path', 'pedestrian', 'rail',
+        ]);
+        const WATER_CLS = new Set(['ocean', 'lake', 'river', 'pond', 'dock', 'swimming_pool']);
+
+        const cls = (f: Feat) => f.properties.class;
+        const isPlace = (f: Feat) => PLACE_CLS.has(cls(f) || '');
+        const isRoad = (f: Feat) =>
+          ROAD_CLS.has(cls(f) || '') &&
+          (f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString');
+        const isWater = (f: Feat) =>
+          WATER_CLS.has(cls(f) || '') &&
+          (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon');
+        const isBuilding = (f: Feat) => f.properties.render_height != null;
+        const isHousenumber = (f: Feat) => f.properties.housenumber != null;
+
+        const nameOf = (f: Feat): string =>
+          f.properties['name:zh-Hans'] || f.properties.name || f.properties['name:latin'] || '';
+        // MVTLoader with shape:'geojson' flattens source layers, so filter by
+        // feature predicate (properties.class / render_height / …), not by layer name.
+        const by = (sel: (f: Feat) => boolean) => feats.filter(sel);
+        const named = (sel: (f: Feat) => boolean) =>
+          feats.filter((f) => sel(f) && nameOf(f));
+
+        // Pick a Point for label placement: Points use coords as-is; LineStrings
+        // use their midpoint; Polygons use the first ring's midpoint.
+        const labelPos = (f: Feat): [number, number] => {
+          const g = f.geometry;
+          if (g.type === 'Point') return g.coordinates as [number, number];
+          if (g.type === 'LineString') {
+            const c = g.coordinates as [number, number][];
+            return c[Math.floor(c.length / 2)];
+          }
+          if (g.type === 'Polygon') {
+            const r = (g.coordinates as [number, number][][])[0];
+            return r[Math.floor(r.length / 2)];
+          }
+          return [0, 0];
+        };
+
+        // Road colour/width by OpenMapTiles transportation `class`.
+        const roadColor = (f: Feat): [number, number, number, number] => {
+          switch (f.properties.class) {
+            case 'motorway':
+              return [253, 224, 71, 230];
+            case 'trunk':
+            case 'primary':
+              return [251, 146, 60, 210];
+            case 'secondary':
+              return [203, 213, 225, 200];
+            case 'rail':
+              return [125, 211, 252, 170];
+            case 'tertiary':
+              return [186, 200, 220, 180];
+            default:
+              return [148, 163, 184, 160];
+          }
+        };
+        const roadWidth = (f: Feat): number => {
+          switch (f.properties.class) {
+            case 'motorway':
+              return 2.5;
+            case 'trunk':
+            case 'primary':
+              return 1.8;
+            case 'secondary':
+              return 1.3;
+            case 'tertiary':
+              return 1.0;
+            default:
+              return 0.5;
+          }
+        };
+
+        return [
+          // Water (rivers, lakes, ocean polygons from OSM)
+          new GeoJsonLayer({
+            ...props,
+            id: `${props.id}-water`,
+            data: by(isWater) as unknown as GeoJSON.FeatureCollection,
+            stroked: false,
+            filled: true,
+            getFillColor: [30, 58, 80, 180],
+            pickable: false,
+          }),
+          // Building footprints
+          new GeoJsonLayer({
+            ...props,
+            id: `${props.id}-building`,
+            data: by(isBuilding) as unknown as GeoJSON.FeatureCollection,
+            stroked: false,
+            filled: true,
+            getFillColor: [50, 60, 80, 190],
+            pickable: false,
+          }),
+          // Roads / rails by class
+          new GeoJsonLayer({
+            ...props,
+            id: `${props.id}-transportation`,
+            data: by(isRoad) as unknown as GeoJSON.FeatureCollection,
+            stroked: true,
+            filled: false,
+            getLineColor: roadColor as unknown as (f: unknown) => [number, number, number, number],
+            getLineWidth: roadWidth as unknown as (f: unknown) => number,
+            lineWidthMinPixels: 0.4,
+            lineWidthUnits: 'pixels',
+            pickable: false,
+          }),
+          // Place name labels (cities, neighbourhoods)
+          new TextLayer({
+            ...props,
+            id: `${props.id}-place-labels`,
+            data: named(isPlace) as unknown[],
+            getPosition: labelPos as unknown as (f: unknown) => [number, number],
+            getText: nameOf as unknown as (f: unknown) => string,
+            getSize: 11,
+            getColor: [240, 245, 250, 220],
+            background: true,
+            backgroundPadding: [2, 1],
+            getBackgroundColor: [10, 14, 22, 150],
+            fontFamily: '"Noto Sans CJK SC", system-ui, sans-serif',
+            sizeUnits: 'pixels',
+            pickable: false,
+          }),
+          // Street names (from transportation_name LineStrings — midpoint)
+          new TextLayer({
+            ...props,
+            id: `${props.id}-street-labels`,
+            data: named(isRoad) as unknown[],
+            getPosition: labelPos as unknown as (f: unknown) => [number, number],
+            getText: nameOf as unknown as (f: unknown) => string,
+            getSize: 9,
+            getColor: [180, 200, 225, 210],
+            background: true,
+            backgroundPadding: [2, 0],
+            getBackgroundColor: [10, 14, 22, 120],
+            fontFamily: '"Noto Sans CJK SC", system-ui, sans-serif',
+            sizeUnits: 'pixels',
+            pickable: false,
+          }),
+          // House numbers (only meaningful at the deepest zoom; OSM coverage varies)
+          new TextLayer({
+            ...props,
+            id: `${props.id}-housenumbers`,
+            data: by(isHousenumber) as unknown[],
+            getPosition: labelPos as unknown as (f: unknown) => [number, number],
+            getText: ((f: Feat) => f.properties.housenumber || '') as unknown as (f: unknown) => string,
+            getSize: 8,
+            getColor: [148, 163, 184, 200],
+            fontFamily: 'system-ui, sans-serif',
+            sizeUnits: 'pixels',
+            pickable: false,
+          }),
+        ];
+      },
+    }),
+  ];
 }

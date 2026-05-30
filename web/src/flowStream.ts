@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flowPath, loadCables } from './cables';
 import { loadHubs } from './hubs';
-import { loadLandmass } from './landmass';
+import { loadLandmass, landmassReady, onLand } from './landmass';
 import type { Flow, HomeConfig, LiveFlow, ProtoKey, ServiceKey } from './types';
 
 const MAX_FLOWS = 4000;
@@ -35,8 +35,22 @@ let HOME_REF: [number, number] = [0, 0];
 function hashOffset(ip: string): [number, number] {
   let h = 0;
   for (let i = 0; i < ip.length; i++) h = (h * 31 + ip.charCodeAt(i)) >>> 0;
-  const ang = ((h % 360) * Math.PI) / 180;
-  const r = 0.18 + ((h >> 9) % 100) / 100 * 0.55; // 0.18..0.73 deg around home
+  const r = 0.02 + ((h >> 9) % 100) / 100 * 0.07; // 0.02..0.09 deg ≈ 2..10 km, city-scale
+  const base = h % 360;
+  // LAN/loopback hosts all geolocate to the operator's real home site (wherever
+  // that is in the world). Scatter them only a few km — within the home CITY — so
+  // multiple internal hosts stay distinguishable yet sit at their true location,
+  // not 20–80 km out in the countryside or sea. A coastal home would still drop a
+  // few dots in the water, so rotate the angle deterministically (golden step) to
+  // the first on-land position. Falls back to the raw ring before landmass loads.
+  if (landmassReady()) {
+    for (let k = 0; k < 24; k++) {
+      const ang = (((base + k * 137.5) % 360) * Math.PI) / 180;
+      const p: [number, number] = [HOME_REF[0] + Math.cos(ang) * r, HOME_REF[1] + Math.sin(ang) * r];
+      if (onLand(p)) return [Math.cos(ang) * r, Math.sin(ang) * r];
+    }
+  }
+  const ang = (base * Math.PI) / 180;
   return [Math.cos(ang) * r, Math.sin(ang) * r];
 }
 
