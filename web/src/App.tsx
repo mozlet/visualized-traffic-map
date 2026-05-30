@@ -10,7 +10,7 @@ import { Timeline } from './Timeline';
 import { DraggablePanel } from './DraggablePanel';
 import { Icon } from './icons';
 import type { LiveFlow, ProtoKey, ServiceKey } from './types';
-import { STR, PLACE_LANG, LANG_NAMES, initialLang, saveLang, type Lang } from './i18n';
+import { STR, PLACE_LANG, PMT_LANG, LANG_NAMES, initialLang, saveLang, type Lang } from './i18n';
 import './App.css';
 
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
@@ -319,8 +319,13 @@ export default function App() {
     () => (showLabels ? stateLayer(theme, zoomBucket) : []),
     [theme, zoomBucket, showLabels],
   );
-  // OSM street-level basemap (Protomaps PMTiles) fades in deep-zoomed.
-  const osm = useMemo(() => osmBaseLayer(showLabels, zoomBucket), [showLabels, zoomBucket]);
+  // OSM street-level basemap (Protomaps PMTiles) fades in deep-zoomed. Street
+  // labels follow the UI language via PMT_LANG (falls through to name:latin if
+  // the tileset doesn't include that language).
+  const osm = useMemo(
+    () => osmBaseLayer(showLabels, zoomBucket, PMT_LANG[lang]),
+    [showLabels, zoomBucket, lang],
+  );
   // Labels rebuild only on zoom / toggle / active-traffic change — not per frame.
   const labels = useMemo(
     () => labelLayers(zoom, showLabels, activeRef.current, center),

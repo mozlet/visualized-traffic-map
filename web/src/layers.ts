@@ -197,11 +197,11 @@ export function tripsLayer(
 // so the existing low-zoom basemap (countries/states/cables) stays clean.
 let pmtilesInst: PMTiles | null = null;
 function getPMT(): PMTiles {
-  if (!pmtilesInst) pmtilesInst = new PMTiles('/data/liaoning.pmtiles');
+  if (!pmtilesInst) pmtilesInst = new PMTiles('/data/china.pmtiles');
   return pmtilesInst;
 }
 const OSM_MIN_ZOOM = 9; // below this, the global GeoJSON basemap is enough
-export function osmBaseLayer(visible: boolean, zoom: number): Layer[] {
+export function osmBaseLayer(visible: boolean, zoom: number, langField = 'name:en'): Layer[] {
   if (!visible || zoom < OSM_MIN_ZOOM) return [];
   return [
     new TileLayer({
@@ -232,14 +232,7 @@ export function osmBaseLayer(visible: boolean, zoom: number): Layer[] {
         // falls through to `name:latin`; `isBuilding` / `isHousenumber` simply
         // produce empty layers here and would activate against a richer preset.
         type Feat = {
-          properties: {
-            class?: string;
-            name?: string;
-            'name:latin'?: string;
-            'name:zh-Hans'?: string;
-            housenumber?: string;
-            render_height?: number;
-          };
+          properties: Record<string, string | number | undefined>;
           geometry: { type: string; coordinates: unknown };
         };
         const raw = props.data as { features?: Feat[] } | Feat[] | null;
@@ -259,7 +252,7 @@ export function osmBaseLayer(visible: boolean, zoom: number): Layer[] {
         ]);
         const WATER_CLS = new Set(['ocean', 'lake', 'river', 'pond', 'dock', 'swimming_pool']);
 
-        const cls = (f: Feat) => f.properties.class;
+        const cls = (f: Feat) => f.properties.class as string | undefined;
         const isPlace = (f: Feat) => PLACE_CLS.has(cls(f) || '');
         const isRoad = (f: Feat) =>
           ROAD_CLS.has(cls(f) || '') &&
@@ -270,8 +263,21 @@ export function osmBaseLayer(visible: boolean, zoom: number): Layer[] {
         const isBuilding = (f: Feat) => f.properties.render_height != null;
         const isHousenumber = (f: Feat) => f.properties.housenumber != null;
 
-        const nameOf = (f: Feat): string =>
-          f.properties['name:zh-Hans'] || f.properties.name || f.properties['name:latin'] || '';
+        // Tile attribute fallback per requested UI language (OpenMapTiles spec):
+        //   1) the exact `name:<lang>` field if present
+        //   2) for Latin-UI users: `name:latin` next (transliterated), so a CN
+        //      village without `name:en` reads "Hongmiaozi Cun" not "红庙子村"
+        //   3) Chinese-UI users keep falling through to native `name` first,
+        //      since that's already the local script they want
+        //   4) raw `name` and `name:latin` are last-resort safety nets
+        const isZhUI = langField === 'name:zh' || langField === 'name:zh-Hans';
+        const nameOf = (f: Feat): string => {
+          const lang = f.properties[langField] as string | undefined;
+          if (lang) return lang;
+          const name = f.properties.name as string | undefined;
+          const latin = f.properties['name:latin'] as string | undefined;
+          return (isZhUI ? name || latin : latin || name) || '';
+        };
         // MVTLoader with shape:'geojson' flattens source layers, so filter by
         // feature predicate (properties.class / render_height / …), not by layer name.
         const by = (sel: (f: Feat) => boolean) => feats.filter(sel);
@@ -375,6 +381,9 @@ export function osmBaseLayer(visible: boolean, zoom: number): Layer[] {
             backgroundPadding: [2, 1],
             getBackgroundColor: [10, 14, 22, 150],
             fontFamily: '"Noto Sans CJK SC", system-ui, sans-serif',
+            // Per-tile labels can contain any CJK char (or Cyrillic / Arabic / …).
+            // Atlas is built on demand from the strings the layer actually sees.
+            characterSet: 'auto',
             sizeUnits: 'pixels',
             pickable: false,
           }),
@@ -391,6 +400,7 @@ export function osmBaseLayer(visible: boolean, zoom: number): Layer[] {
             backgroundPadding: [2, 0],
             getBackgroundColor: [10, 14, 22, 120],
             fontFamily: '"Noto Sans CJK SC", system-ui, sans-serif',
+            characterSet: 'auto',
             sizeUnits: 'pixels',
             pickable: false,
           }),
@@ -400,10 +410,11 @@ export function osmBaseLayer(visible: boolean, zoom: number): Layer[] {
             id: `${props.id}-housenumbers`,
             data: by(isHousenumber) as unknown[],
             getPosition: labelPos as unknown as (f: unknown) => [number, number],
-            getText: ((f: Feat) => f.properties.housenumber || '') as unknown as (f: unknown) => string,
+            getText: ((f: Feat) => (f.properties.housenumber as string | undefined) || '') as unknown as (f: unknown) => string,
             getSize: 8,
             getColor: [148, 163, 184, 200],
             fontFamily: 'system-ui, sans-serif',
+            characterSet: 'auto',
             sizeUnits: 'pixels',
             pickable: false,
           }),

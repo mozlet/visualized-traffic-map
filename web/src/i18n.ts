@@ -266,6 +266,15 @@ export const PLACE_LANG: Record<Lang, string> = {
   es: 'n_es', fr: 'n_fr', de: 'n_de', ar: 'n_ar', pt: 'n_pt', it: 'n_it',
 };
 
+// OpenMapTiles `name:<lang>` per app language for the PMTiles street layer
+// (zh-Hant maps to the same simplified-Chinese tag tilemaker emits). Fallback
+// chain when the tile lacks the field: name → name:latin (transliterated).
+export const PMT_LANG: Record<Lang, string> = {
+  en: 'name:en', zh: 'name:zh', 'zh-Hant': 'name:zh', ja: 'name:ja',
+  ko: 'name:ko', ru: 'name:ru', es: 'name:es', fr: 'name:fr',
+  de: 'name:de', ar: 'name:ar', pt: 'name:pt', it: 'name:it',
+};
+
 const KEY = 'opnmap.lang';
 const LANGS = Object.keys(LANG_NAMES) as Lang[];
 

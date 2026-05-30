@@ -77,6 +77,10 @@ CLAUDE.md
 # PeeringDB-derived hubs (AUP: not redistributable) — local deployment only
 web/public/data/hubs.local.geojson
 *.pmtiles
+*.osm.pbf
+
+# tilemaker build scratch (lua + config + the giant PBF + output pmtiles)
+pmtiles-build/
 
 # Local screenshots + Playwright MCP session cache
 .playwright-mcp/
