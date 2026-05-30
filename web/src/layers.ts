@@ -207,7 +207,7 @@ const OSM_MIN_ZOOM = 9; // below this, the global GeoJSON basemap is enough
 // label count naturally falls, so we render everything (so the user can read the
 // area they zoomed all the way in to).
 const OSM_DENSE_ZOOM = 12;
-const OSM_LABEL_GRID = 0.2; // ~22 km cells; pairs with App.tsx activeFineRef
+const OSM_LABEL_GRID = 0.1; // ~11 km cells; pairs with App.tsx activeFineRef
 export function osmBaseLayer(
   visible: boolean,
   zoom: number,
@@ -229,14 +229,14 @@ export function osmBaseLayer(
   };
   // Place-class density tiers — CN OSM tags every settlement down to single-
   // farmhouse hamlets, which at z=9–11 fire hundreds of overlapping labels.
-  // At mid-zoom show only real cities/towns; villages/hamlets/neighbourhoods
-  // only fade in at z≥OSM_DENSE_ZOOM (street zoom, viewport small enough that
-  // they no longer pile up).
+  // At mid-zoom show only city-class anchors (regional / provincial centers);
+  // town/village/hamlet/etc. fade in at z≥OSM_DENSE_ZOOM (street zoom,
+  // viewport small enough that they no longer pile up).
   const placeClassesAtZoom = (z: number): Set<string> =>
     z >= OSM_DENSE_ZOOM
       ? new Set(['country', 'state', 'province', 'city', 'town', 'village',
                  'hamlet', 'suburb', 'neighbourhood', 'locality'])
-      : new Set(['country', 'state', 'province', 'city', 'town']);
+      : new Set(['country', 'state', 'province', 'city']);
   const allowedPlaceClasses = placeClassesAtZoom(zoom);
   return [
     new TileLayer({

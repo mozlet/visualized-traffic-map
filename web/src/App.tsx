@@ -294,8 +294,9 @@ export default function App() {
   // don't churn every animation frame:
   //   • coarse 3°  → drives Natural Earth low-zoom country/state/city labels
   //     (declutter the globe to traffic-touched regions)
-  //   • fine 0.2° (~22km) → drives PMTiles street-zoom label gating, so a
-  //     deep-zoomed view doesn't try to render every village in OSM CN
+  //   • fine 0.1° (~11km) → drives PMTiles street-zoom label gating, so a
+  //     deep-zoomed view doesn't try to render every village in OSM CN.
+  //     Bucket size MUST match OSM_LABEL_GRID in layers.ts.
   const activeRef = useRef<Set<string>>(new Set());
   const activeFineRef = useRef<Set<string>>(new Set());
   const [activeVer, setActiveVer] = useState(0);
@@ -308,8 +309,8 @@ export default function App() {
         if (now - f.born > 60000) continue;
         g.add(`${Math.round(f.dst[0] / 3)},${Math.round(f.dst[1] / 3)}`);
         g.add(`${Math.round(f.src[0] / 3)},${Math.round(f.src[1] / 3)}`);
-        gf.add(`${Math.round(f.dst[0] / 0.2)},${Math.round(f.dst[1] / 0.2)}`);
-        gf.add(`${Math.round(f.src[0] / 0.2)},${Math.round(f.src[1] / 0.2)}`);
+        gf.add(`${Math.round(f.dst[0] / 0.1)},${Math.round(f.dst[1] / 0.1)}`);
+        gf.add(`${Math.round(f.src[0] / 0.1)},${Math.round(f.src[1] / 0.1)}`);
       }
       activeRef.current = g;
       activeFineRef.current = gf;
