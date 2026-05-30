@@ -16,8 +16,12 @@ use tokio::process::Command;
 
 const MAX_HOPS: &str = "20";
 const CYCLES: &str = "3";
-const CONCURRENCY: usize = 6;
-const BATCH: i64 = 24;
+// Throughput tuned up so the RTT-relocate loop covers active CDN/cloud IPs faster
+// — most flows hit a CDN whose MaxMind coord is the operator HQ, and only a real
+// measured RTT can pull the locally-served ones back to the edge. More per batch
+// + a tighter interval ≈ doubles coverage without overloading a LAN gateway.
+const CONCURRENCY: usize = 10;
+const BATCH: i64 = 48;
 
 #[derive(Serialize)]
 struct Hop {
@@ -29,18 +33,29 @@ struct Hop {
     rtt_ms: Option<f64>,
 }
 
-// Busiest recent public destinations not traced in the last 6 hours.
+// Recent public destinations not traced in the last 6 hours, prioritised so the
+// RTT-relocate loop (geo-doctor) closes on the cases that need it most:
+//   1) IPs geo-doctor flagged dirty but couldn't yet correct (corr_lat IS NULL) —
+//      typically CDN/cloud anycast (Akamai/Cloudflare/Google) whose MaxMind coord
+//      is the operator HQ, not the local edge actually serving us. A measured path
+//      gives the RTT that lets geo-doctor relocate them to a plausible local hop.
+//   2) then the busiest, so high-volume routes still get real geometry.
 const CANDIDATES_SQL: &str = r#"
-SELECT host(dst_addr) AS ip
-FROM flows
-WHERE recv_time > now() - interval '30 minutes'
-  AND NOT (dst_addr <<= '10.0.0.0/8' OR dst_addr <<= '172.16.0.0/12' OR dst_addr <<= '192.168.0.0/16'
-           OR dst_addr <<= '127.0.0.0/8' OR dst_addr <<= '169.254.0.0/16' OR dst_addr <<= '100.64.0.0/10'
-           OR dst_addr <<= '224.0.0.0/4' OR dst_addr <<= 'fc00::/7' OR dst_addr <<= 'fe80::/10'
-           OR dst_addr <<= 'ff00::/8')
-  AND dst_addr NOT IN (SELECT dst_ip FROM routes WHERE traced_at > now() - interval '6 hours')
-GROUP BY dst_addr
-ORDER BY sum(octets) DESC NULLS LAST
+WITH recent AS (
+  SELECT dst_addr, sum(octets) AS bytes
+  FROM flows
+  WHERE recv_time > now() - interval '30 minutes'
+    AND NOT (dst_addr <<= '10.0.0.0/8' OR dst_addr <<= '172.16.0.0/12' OR dst_addr <<= '192.168.0.0/16'
+             OR dst_addr <<= '127.0.0.0/8' OR dst_addr <<= '169.254.0.0/16' OR dst_addr <<= '100.64.0.0/10'
+             OR dst_addr <<= '224.0.0.0/4' OR dst_addr <<= 'fc00::/7' OR dst_addr <<= 'fe80::/10'
+             OR dst_addr <<= 'ff00::/8')
+    AND dst_addr NOT IN (SELECT dst_ip FROM routes WHERE traced_at > now() - interval '6 hours')
+  GROUP BY dst_addr
+)
+SELECT host(r.dst_addr) AS ip
+FROM recent r
+LEFT JOIN ip_geo g ON g.ip = r.dst_addr
+ORDER BY (g.dirty IS TRUE AND g.corr_lat IS NULL) DESC, r.bytes DESC NULLS LAST
 LIMIT $1
 "#;
 
@@ -98,14 +113,21 @@ async fn store(pool: &PgPool, dst: &str, hops: &[Hop]) -> anyhow::Result<()> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL not set")?;
-    let pool = PgPoolOptions::new().max_connections(4).connect(&database_url).await?;
+    let pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&database_url)
+        .await?;
 
     let db_path = std::env::var("GEOIP_DB_PATH").ok();
     let home_lat = env_f64("HOME_LAT", 0.0);
     let home_lon = env_f64("HOME_LON", 0.0);
-    let geo = GeoResolver::new(db_path.as_deref().map(std::path::Path::new), home_lat, home_lon);
+    let geo = GeoResolver::new(
+        db_path.as_deref().map(std::path::Path::new),
+        home_lat,
+        home_lon,
+    );
 
-    let interval = env_u64("MTR_INTERVAL_SECS", 120);
+    let interval = env_u64("MTR_INTERVAL_SECS", 90);
     eprintln!("mtr-worker: every {interval}s, {CONCURRENCY} concurrent, top {BATCH} dst");
 
     loop {
@@ -125,9 +147,11 @@ async fn run_batch(pool: &PgPool, geo: &GeoResolver) -> anyhow::Result<usize> {
         .context("candidates")?;
     let mut traced = 0;
     for chunk in ips.chunks(CONCURRENCY) {
-        let results = join_all(chunk.iter().map(|ip| async move {
-            (ip.clone(), trace(ip, geo).await)
-        }))
+        let results = join_all(
+            chunk
+                .iter()
+                .map(|ip| async move { (ip.clone(), trace(ip, geo).await) }),
+        )
         .await;
         for (ip, hops) in results {
             if let Some(hops) = hops {
@@ -141,8 +165,14 @@ async fn run_batch(pool: &PgPool, geo: &GeoResolver) -> anyhow::Result<usize> {
 }
 
 fn env_f64(k: &str, d: f64) -> f64 {
-    std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d)
+    std::env::var(k)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(d)
 }
 fn env_u64(k: &str, d: u64) -> u64 {
-    std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d)
+    std::env::var(k)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(d)
 }

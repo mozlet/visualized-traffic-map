@@ -76,3 +76,9 @@ CLAUDE.md
 
 # PeeringDB-derived hubs (AUP: not redistributable) — local deployment only
 web/public/data/hubs.local.geojson
+*.pmtiles
+
+# Local screenshots + Playwright MCP session cache
+.playwright-mcp/
+map-*.jpg
+map-*.png
