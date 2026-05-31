@@ -52,15 +52,20 @@ export function stateLayer(theme: 'dark' | 'light', zoom: number): Layer[] {
 
 // Real measured mtr paths (faint static polylines under the live comets).
 export function routesLayer(routes: RoutePath[], visible: boolean): Layer {
+  // mtr-measured paths: the *actual* hops from each LAN flow's `mtr` trace.
+  // With the network-map view replacing the road basemap, these become the
+  // single most useful overlay (they're the ground truth for "where do my
+  // packets really go"), so they get a brighter + thicker stroke. Still
+  // opt-in via the showRoutes toggle so users can dim them on demand.
   return new PathLayer<RoutePath>({
     id: 'routes',
     data: routes,
     visible,
     getPath: (r) => r.points,
-    getColor: [125, 185, 232, 38], // dim, subtle texture (was a bright near-white clutter)
-    getWidth: 1,
+    getColor: [165, 243, 252, 175], // cyan-200, ~70% alpha
+    getWidth: 2,
     widthUnits: 'pixels',
-    widthMinPixels: 0.5,
+    widthMinPixels: 1.2,
     capRounded: true,
     jointRounded: true,
   });
