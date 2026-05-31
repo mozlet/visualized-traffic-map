@@ -294,8 +294,8 @@ export function osmBaseLayer(
         const isWater = (f: Feat) =>
           WATER_CLS.has(cls(f) || '') &&
           (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon');
-        const isBuilding = (f: Feat) => f.properties.render_height != null;
-        const isHousenumber = (f: Feat) => f.properties.housenumber != null;
+        // (isBuilding / isHousenumber predicates removed with their layers —
+        // resurrect alongside the rendering if a street-detail toggle returns.)
 
         // Tile attribute fallback per requested UI language (OpenMapTiles spec):
         //   1) the exact `name:<lang>` field if present
@@ -368,6 +368,16 @@ export function osmBaseLayer(
           }
         };
 
+        // OSM road/building rendering was removed intentionally: at deep zoom
+        // the screen should show NETWORK topology (cables / IXPs / facilities
+        // / mtr paths), not motorways and buildings. Water polygons stay as a
+        // basemap reference (rivers / lakes / coastline still useful for
+        // orientation), but the transportation + building layers — and their
+        // roadColor/roadWidth ramps — are deliberately unused now and kept
+        // around only so a future "OSM road layer" toggle can flip them back
+        // on without re-deriving the OpenMapTiles class taxonomy.
+        void roadColor;
+        void roadWidth;
         return [
           // Water (rivers, lakes, ocean polygons from OSM)
           new GeoJsonLayer({
@@ -377,29 +387,6 @@ export function osmBaseLayer(
             stroked: false,
             filled: true,
             getFillColor: [30, 58, 80, 180],
-            pickable: false,
-          }),
-          // Building footprints
-          new GeoJsonLayer({
-            ...props,
-            id: `${props.id}-building`,
-            data: by(isBuilding) as unknown as GeoJSON.FeatureCollection,
-            stroked: false,
-            filled: true,
-            getFillColor: [50, 60, 80, 190],
-            pickable: false,
-          }),
-          // Roads / rails by class
-          new GeoJsonLayer({
-            ...props,
-            id: `${props.id}-transportation`,
-            data: by(isRoad) as unknown as GeoJSON.FeatureCollection,
-            stroked: true,
-            filled: false,
-            getLineColor: roadColor as unknown as (f: unknown) => [number, number, number, number],
-            getLineWidth: roadWidth as unknown as (f: unknown) => number,
-            lineWidthMinPixels: 0.4,
-            lineWidthUnits: 'pixels',
             pickable: false,
           }),
           // Place name labels (cities, neighbourhoods) — gated to active-flow
@@ -440,20 +427,9 @@ export function osmBaseLayer(
             sizeUnits: 'pixels',
             pickable: false,
           }),
-          // House numbers (only meaningful at the deepest zoom; OSM coverage varies)
-          new TextLayer({
-            ...props,
-            id: `${props.id}-housenumbers`,
-            data: by(isHousenumber).filter((f) => nearActive(labelPos(f))) as unknown[],
-            getPosition: labelPos as unknown as (f: unknown) => [number, number],
-            getText: ((f: Feat) => (f.properties.housenumber as string | undefined) || '') as unknown as (f: unknown) => string,
-            getSize: 8,
-            getColor: [148, 163, 184, 200],
-            fontFamily: 'system-ui, sans-serif',
-            characterSet: 'auto',
-            sizeUnits: 'pixels',
-            pickable: false,
-          }),
+          // House numbers were rendered here previously; dropped for the network-
+          // topology view. Re-enable from git history if a future "street detail"
+          // toggle wants them back.
         ];
       },
     }),

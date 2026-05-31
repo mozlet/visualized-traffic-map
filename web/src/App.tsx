@@ -5,6 +5,7 @@ import { borderLayer, stateLayer, osmBaseLayer, PROTO_COLOR } from './layers';
 import { MapCanvas } from './MapCanvas';
 import { fetchRoutes, type RoutePath } from './routes';
 import { loadLabels, labelLayers, searchPlaces } from './labels';
+import { loadInfra, infraLayers } from './infra';
 import { terminatorLayers } from './terminator';
 import { Timeline } from './Timeline';
 import { DraggablePanel } from './DraggablePanel';
@@ -232,6 +233,12 @@ export default function App() {
     void loadLabels(PLACE_LANG[lang]).then(() => force((n) => n + 1));
   }, [lang]);
 
+  // Network-infra overlay (IXPs + cable landings + PeeringDB facilities) —
+  // these are the dots the deep-zoom view replaces roads with.
+  useEffect(() => {
+    void loadInfra().then(() => force((n) => n + 1));
+  }, []);
+
   // Real measured routes (mtr) — refresh periodically.
   useEffect(() => {
     const load = () => fetchRoutes().then(setRoutes).catch(() => {});
@@ -344,11 +351,15 @@ export default function App() {
   // Day/night terminator recomputed once a minute (the sun moves slowly).
   const minuteTick = Math.floor(Date.now() / 60000);
   const night = useMemo(() => (showNight ? terminatorLayers(new Date()) : []), [minuteTick, showNight]);
+  // Network-infrastructure dots (IXPs / cable landings / PeeringDB facilities).
+  // Replaces the OSM road rendering at street zoom — the deep view is now a
+  // network map: where your flows actually transit, not roads.
+  const infra = useMemo(() => infraLayers(zoomBucket, showLabels), [zoomBucket, showLabels]);
   // Static layers (rebuilt only on their own inputs) handed to the canvas; the
   // animated comet/endpoint layers are built per-frame inside <MapCanvas>.
   const staticLayers = useMemo(
-    () => [border, ...states, ...osm, ...night, ...labels],
-    [border, states, osm, night, labels],
+    () => [border, ...states, ...osm, ...night, ...labels, ...infra],
+    [border, states, osm, night, labels, infra],
   );
   const homePos: [number, number] = [home.lon, home.lat];
 
