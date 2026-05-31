@@ -118,10 +118,22 @@ export function searchPlaces(q: string, limit = 8): { text: string; position: [n
 const TOWN_MIN_ZOOM = 6.5;
 const TOWN_MAX = 700; // hard cap on rendered town labels (perf safety)
 
+// Fine-grid cell-near (0.1° ≈ 11 km) for the zoomed-in active-flow gate. Pairs
+// with App.tsx activeFineRef and layers.ts OSM_LABEL_GRID — same bucket size so
+// the three label tiers (Natural Earth city, GeoNames town, PMTiles street) all
+// reveal/hide on the same cells when traffic moves.
+const FINE_GRID = 0.1;
+const cellNearFine = (active: Set<string>, pos: [number, number]): boolean => {
+  const cx = Math.round(pos[0] / FINE_GRID);
+  const cy = Math.round(pos[1] / FINE_GRID);
+  return active.has(`${cx},${cy}`);
+};
+
 export function labelLayers(
   zoom: number,
   visible: boolean,
   active: Set<string>,
+  activeFine: Set<string>,
   center?: [number, number],
 ): Layer[] {
   if (!ready || !visible || zoom < HIDE_BELOW) return [];
@@ -130,13 +142,24 @@ export function labelLayers(
   // budget widens with zoom (was a flat +1.2), so deep zoom shows the town tier
   // (mz up to 9 in the dataset) instead of stopping at regional cities.
   const reveal = zoom < 4 ? 1.2 : 1.2 + (zoom - 4) * 0.9;
+  // City/country gate semantics:
+  //   • zoomed out (z<4.2): coarse 3° cells (active) keep label set thinned to
+  //     traffic-touched regions — the original declutter
+  //   • zoomed in (z≥4.2): fine 11km cells (activeFine) gate the label, so a
+  //     deep-zoom view only shows cities the LAN actually talks to. Without
+  //     this, every Chinese provincial capital labelled itself just because the
+  //     map happened to pan over it, even with zero flows there.
   const placeData = places.filter(
-    (p) => p.mz <= zoom + reveal && (zoomedIn || cellNear(active, p.position)),
+    (p) =>
+      p.mz <= zoom + reveal &&
+      (zoomedIn ? cellNearFine(activeFine, p.position) : cellNear(active, p.position)),
   );
-  const countryData = countries.filter((c) => zoomedIn || cellNear(active, c.position));
+  const countryData = countries.filter((c) =>
+    zoomedIn ? cellNearFine(activeFine, c.position) : cellNear(active, c.position),
+  );
   // Dense town tier: only deep-zoomed, only near the current view, only towns whose
-  // population-min-zoom has been reached — then capped, biggest-first. This keeps a
-  // few hundred labels on screen no matter that the dataset is 33k global towns.
+  // population-min-zoom has been reached — then capped, biggest-first. Also gated
+  // by the same fine-cell active set so towns without traffic don't surface.
   let townData: Place[] = [];
   if (zoom >= TOWN_MIN_ZOOM && center) {
     const span = (360 / 2 ** zoom) * 1.5; // ~visible half-width in degrees
@@ -145,7 +168,8 @@ export function labelLayers(
         (t) =>
           t.mz <= zoom + reveal &&
           Math.abs(t.position[0] - center[0]) < span &&
-          Math.abs(t.position[1] - center[1]) < span,
+          Math.abs(t.position[1] - center[1]) < span &&
+          cellNearFine(activeFine, t.position),
       )
       .sort((a, b) => a.mz - b.mz) // bigger towns (lower mz) first
       .slice(0, TOWN_MAX);

@@ -338,7 +338,7 @@ export default function App() {
   );
   // Labels rebuild only on zoom / toggle / active-traffic change — not per frame.
   const labels = useMemo(
-    () => labelLayers(zoom, showLabels, activeRef.current, center),
+    () => labelLayers(zoom, showLabels, activeRef.current, activeFineRef.current, center),
     [zoom, showLabels, activeVer, center],
   );
   // Day/night terminator recomputed once a minute (the sun moves slowly).
