@@ -7,7 +7,7 @@
 import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import type { Layer } from '@deck.gl/core';
 
-type Role = 'landing' | 'ixp' | 'fac' | 'gfw' | 'pop';
+type Role = 'landing' | 'ixp' | 'fac' | 'pop';
 interface Node {
   position: [number, number];
   role: Role;
@@ -15,60 +15,54 @@ interface Node {
   country: string;
 }
 
-// PeeringDB lists ~10 IXPs globally and **0** in China, so CN-bound BGP egress
-// hand-coded here. These are MIIT 国际通信出入口局: BJIX/SHIX/GZIX since 1993,
-// Chongqing added 2013 to serve western China + the overland routes to Central
-// Asia / SE Asia. All four are real network gateways (not airport equivalents),
-// and the GFW deep-packet-inspection systems sit in-line at the same locations.
-const GFW_GATEWAYS: Node[] = [
-  { position: [116.4074, 39.9042], role: 'gfw', name: '北京国际出口 (BJIX)', country: 'China' },
-  { position: [121.4737, 31.2304], role: 'gfw', name: '上海国际出口 (SHIX)', country: 'China' },
-  { position: [113.2644, 23.1291], role: 'gfw', name: '广州国际出口 (GZIX)', country: 'China' },
-  { position: [106.5516, 29.5630], role: 'gfw', name: '重庆国际出口', country: 'China' },
-];
-
 // Major CN backbone POPs (China Telecom ChinaNet / China Unicom / China Mobile
-// regional NAPs that aggregate provincial traffic before it hits an 国际出口).
-// PeeringDB doesn't list these, but they're the de-facto domestic peering /
-// transit anchors that show up as transit hops in mtr traces from most CN
-// flows. Hand-curated; not authoritative, but covers the dominant trunk.
+// regional NAPs that aggregate provincial traffic). PeeringDB doesn't list
+// these, but they're the de-facto domestic peering / transit anchors that show
+// up as transit hops in mtr traces from most CN flows. Hand-curated; not
+// authoritative, but covers the dominant trunk. The four MIIT-designated
+// 国际通信出入口局 (Beijing/Shanghai/Guangzhou/Chongqing) are folded in as
+// regular POPs — earlier rendering pulled them out as a separate "GFW" tier
+// with red halos but the user asked to drop that distinction.
 const CN_POPS: Node[] = [
+  { position: [116.4074, 39.9042], role: 'pop', name: '北京 POP', country: 'China' },
+  { position: [121.4737, 31.2304], role: 'pop', name: '上海 POP', country: 'China' },
+  { position: [113.2644, 23.1291], role: 'pop', name: '广州 POP', country: 'China' },
+  { position: [106.5516, 29.5630], role: 'pop', name: '重庆 POP', country: 'China' },
   { position: [117.2010, 39.0842], role: 'pop', name: '天津 POP', country: 'China' },
   { position: [123.4290, 41.7968], role: 'pop', name: '沈阳 POP', country: 'China' },
   { position: [113.6253, 34.7466], role: 'pop', name: '郑州 POP', country: 'China' },
   { position: [114.3055, 30.5928], role: 'pop', name: '武汉 POP', country: 'China' },
   { position: [108.9398, 34.3416], role: 'pop', name: '西安 POP', country: 'China' },
   { position: [104.0668, 30.5728], role: 'pop', name: '成都 POP', country: 'China' },
-  { position: [102.7123, 25.0407], role: 'pop', name: '昆明 POP (东南亚陆路)', country: 'China' },
-  { position: [ 87.6168, 43.8256], role: 'pop', name: '乌鲁木齐 POP (中亚陆路)', country: 'China' },
+  { position: [102.7123, 25.0407], role: 'pop', name: '昆明 POP', country: 'China' },
+  { position: [ 87.6168, 43.8256], role: 'pop', name: '乌鲁木齐 POP', country: 'China' },
   { position: [118.7969, 32.0603], role: 'pop', name: '南京 POP', country: 'China' },
   { position: [120.1551, 30.2741], role: 'pop', name: '杭州 POP', country: 'China' },
   { position: [120.3826, 36.0671], role: 'pop', name: '青岛 POP', country: 'China' },
-  { position: [114.1694, 22.3193], role: 'pop', name: '香港 POP (国际出境)', country: 'Hong Kong' },
+  { position: [114.1694, 22.3193], role: 'pop', name: '香港 POP', country: 'Hong Kong' },
 ];
 
-// Hand-curated ChinaNet trunk segments: gateways and POPs ↔ their main backbone
-// neighbours. Drawn as semi-transparent thin paths so the bones of the network
-// are visible without competing with the live-flow arcs. Each pair (a, b) refs
-// the city names below — resolved to positions at render time.
+// Hand-curated ChinaNet trunk segments. Drawn as semi-transparent thin paths
+// so the bones of the network are visible without competing with the live-flow
+// arcs. Each pair (a, b) refs city names from CN_POPS, resolved at render.
 const TRUNK_LINKS: [string, string][] = [
-  ['北京国际出口 (BJIX)', '天津 POP'],
-  ['北京国际出口 (BJIX)', '沈阳 POP'],
-  ['北京国际出口 (BJIX)', '青岛 POP'],
-  ['北京国际出口 (BJIX)', '郑州 POP'],
-  ['北京国际出口 (BJIX)', '西安 POP'],
+  ['北京 POP', '天津 POP'],
+  ['北京 POP', '沈阳 POP'],
+  ['北京 POP', '青岛 POP'],
+  ['北京 POP', '郑州 POP'],
+  ['北京 POP', '西安 POP'],
   ['郑州 POP', '武汉 POP'],
-  ['武汉 POP', '广州国际出口 (GZIX)'],
-  ['武汉 POP', '上海国际出口 (SHIX)'],
+  ['武汉 POP', '广州 POP'],
+  ['武汉 POP', '上海 POP'],
   ['西安 POP', '成都 POP'],
-  ['西安 POP', '乌鲁木齐 POP (中亚陆路)'],
-  ['成都 POP', '重庆国际出口'],
-  ['成都 POP', '昆明 POP (东南亚陆路)'],
-  ['重庆国际出口', '武汉 POP'],
-  ['上海国际出口 (SHIX)', '南京 POP'],
-  ['上海国际出口 (SHIX)', '杭州 POP'],
-  ['上海国际出口 (SHIX)', '广州国际出口 (GZIX)'],
-  ['广州国际出口 (GZIX)', '香港 POP (国际出境)'],
+  ['西安 POP', '乌鲁木齐 POP'],
+  ['成都 POP', '重庆 POP'],
+  ['成都 POP', '昆明 POP'],
+  ['重庆 POP', '武汉 POP'],
+  ['上海 POP', '南京 POP'],
+  ['上海 POP', '杭州 POP'],
+  ['上海 POP', '广州 POP'],
+  ['广州 POP', '香港 POP'],
 ];
 
 let nodes: Node[] = [];
@@ -99,7 +93,7 @@ export async function loadInfra(): Promise<void> {
           country: f.properties?.country || '',
         });
       }
-      nodes = [...out, ...GFW_GATEWAYS, ...CN_POPS];
+      nodes = [...out, ...CN_POPS];
       ready = nodes.length > 0;
       if (ready) return;
     } catch {
@@ -128,9 +122,6 @@ export function infraLayers(zoom: number, visible: boolean): Layer[] {
   const landings = zoom >= LANDING_MIN_ZOOM ? nodes.filter((n) => n.role === 'landing') : [];
   const facs = zoom >= FAC_MIN_ZOOM ? nodes.filter((n) => n.role === 'fac') : [];
   const pops = zoom >= POP_MIN_ZOOM ? nodes.filter((n) => n.role === 'pop') : [];
-  // GFW egress markers always render (4 dots, no clutter cost) — they're the
-  // single most important context for a "network" view of CN traffic.
-  const gfws = nodes.filter((n) => n.role === 'gfw');
 
   // Resolve trunk links to actual coordinate pairs (skip if either end is
   // missing — defensive, the hard-coded set should never miss a name).
@@ -296,57 +287,6 @@ export function infraLayers(zoom: number, visible: boolean): Layer[] {
         backgroundPadding: [2, 0],
         getBackgroundColor: [10, 14, 22, 170],
         fontWeight: 500,
-        sizeUnits: 'pixels',
-        pickable: false,
-      }),
-    );
-  }
-
-  // GFW / international-gateway markers. Bigger, hotter, always labelled —
-  // these are the choke points where mainland CN traffic crosses into and out
-  // of the global internet, and they're the answer to "where are my packets
-  // actually leaving China?". Two rings (orange outer halo + red dot) so
-  // they're impossible to miss against the cable spaghetti.
-  if (gfws.length > 0) {
-    out.push(
-      new ScatterplotLayer<Node>({
-        id: 'infra-gfw-halo',
-        data: gfws,
-        getPosition: (d) => d.position,
-        getRadius: 12,
-        radiusUnits: 'pixels',
-        getFillColor: [0, 0, 0, 0],
-        stroked: true,
-        getLineColor: [251, 146, 60, 220], // orange-400
-        lineWidthMinPixels: 1.4,
-        pickable: false,
-      }),
-      new ScatterplotLayer<Node>({
-        id: 'infra-gfw',
-        data: gfws,
-        getPosition: (d) => d.position,
-        getRadius: 5,
-        radiusUnits: 'pixels',
-        getFillColor: [239, 68, 68, 245], // red-500
-        stroked: true,
-        getLineColor: [255, 255, 255, 240],
-        lineWidthMinPixels: 1.2,
-        pickable: false,
-      }),
-      new TextLayer<Node>({
-        id: 'infra-gfw-labels',
-        data: gfws,
-        getPosition: (d) => d.position,
-        getText: (d) => d.name,
-        getSize: 11,
-        getColor: [254, 215, 170, 245], // orange-200
-        getPixelOffset: [0, -18],
-        fontFamily: '"Noto Sans CJK SC", system-ui, sans-serif',
-        characterSet: 'auto',
-        background: true,
-        backgroundPadding: [3, 1],
-        getBackgroundColor: [10, 14, 22, 200],
-        fontWeight: 700,
         sizeUnits: 'pixels',
         pickable: false,
       }),
