@@ -7,38 +7,18 @@
 
 import { haversineKm } from './geo';
 import { continentGroup, landFraction } from './landmass';
+import { getTopology, loadTopology } from './topology';
 
 type LngLat = [number, number];
 
-// Synthetic CN backbone POPs (Tianjin/Beijing/Shenyang corridor + the home
-// vicinity). PeeringDB's facility set thins out across the 京-沈走廊, leaving
-// landRoute with no stepping-stones between Tianjin and Home — Dijkstra
-// then takes a 267 km chord across Bohai Bay, which the user (legitimately)
-// reads as a flyline. These coordinates are real ChinaNet POP cities; they
-// match what the routing layer would have grown to organically if PeeringDB's
-// extract were denser in that region. The ordering matters: SYNTHETIC_CN_EDGES
-// below pairs them as a chain so Dijkstra has an unbroken corridor even when
-// the k-NN happens to pick nearer (denser PeeringDB-region) neighbours.
-const SYNTHETIC_CN_HUBS: LngLat[] = [
-  [117.2010, 39.0842], // 0  天津 POP
-  [118.1759, 39.6356], // 1  唐山 — 90 km E of Tianjin
-  [119.5979, 39.9352], // 2  秦皇岛 — 215 km E of Tianjin
-  [119.7794, 40.0103], // 3  山海关 — 长城入海，进入辽宁
-  [120.8369, 40.7112], // 4  葫芦岛 — 60 km SW of Home
-  [0, 0], // 5   — home itself, makes egress/return symmetric
-  [123.4290, 41.7968], // 6  沈阳 POP — east anchor of the corridor
-];
-// Index pairs (into SYNTHETIC_CN_HUBS) that must always be wired as graph
-// edges, regardless of what k-NN picks. Chains the corridor end-to-end so
-// landRoute follows 天津→唐山→秦皇岛→山海关→葫芦岛→→沈阳 instead of
-// hopping across Bohai Bay.
-const SYNTHETIC_CN_EDGES: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6],
-];
-
 let landings: LngLat[] = [];
 let hubs: LngLat[] = []; // inland interconnect points
-let synthStart = -1; // index where SYNTHETIC_CN_HUBS were appended to hubs[]
+// Index of the first user-supplied "corridor" hub appended after the PeeringDB
+// set. -1 = no corridor configured (default). When set, k-NN treats
+// corridor↔corridor edges specially: it skips them so a forced chain (see
+// corridorEdges in /data/topology.json) wins instead of any k-NN shortcut.
+let corridorStart = -1;
+let corridorEdges: [number, number][] = [];
 let grid = new Map<string, LngLat[]>(); // 1° spatial index over `hubs`
 let ready = false;
 
@@ -72,14 +52,18 @@ export async function loadHubs(): Promise<void> {
         if (f.properties?.role === 'landing') landings.push(p);
         else hubs.push(p);
       }
-      // Densify the 京-沈走廊 with synthetic POPs so landRoute can step
-      // overland Tianjin → Tangshan → Qinhuangdao → Huludao → Home →
-      // Shenyang instead of jumping ~270 km across Bohai Bay. Same array as
-      // PeeringDB facilities — same k-NN graph treatment downstream, plus
-      // forced corridor edges below (k-NN alone gets stolen by the dense
-      // Beijing/Tianjin facility cluster and skips Qinhuangdao/Huludao).
-      synthStart = hubs.length;
-      for (const p of SYNTHETIC_CN_HUBS) hubs.push(p);
+      // Optional corridor: densify a stretch where the PeeringDB facility set
+      // is too sparse to give Dijkstra real stepping-stones, so it would
+      // otherwise chord across an intervening body of water. The user
+      // configures these in /data/topology.json (corridorHubs +
+      // corridorEdges). If absent the graph stays exactly the PeeringDB k-NN.
+      await loadTopology();
+      const topo = getTopology();
+      if (topo.corridorHubs.length > 0) {
+        corridorStart = hubs.length;
+        corridorEdges = topo.corridorEdges;
+        for (const p of topo.corridorHubs) hubs.push([p[0], p[1]]);
+      }
       for (const p of hubs) {
         const k = cell(p);
         (grid.get(k) ?? grid.set(k, []).get(k)!).push(p);
@@ -206,21 +190,20 @@ function buildLandGraph(): void {
     }
     cands.sort((a, b) => haversineKm(hubs[i], hubs[a]) - haversineKm(hubs[i], hubs[b]));
     let added = 0;
-    const iIsSynth = synthStart >= 0 && i >= synthStart;
+    const iInCorridor = corridorStart >= 0 && i >= corridorStart;
     for (const j of cands) {
       if (added >= LAND_K) break;
       if (grp[i] != null && grp[j] != null && grp[i] !== grp[j]) continue; // no cross-ocean land hop
-      // Bohai-bypass guard: if both endpoints are SYNTHETIC_CN_HUBS, skip the
-      // k-NN edge — they're already chained via SYNTHETIC_CN_EDGES below, and
-      // letting k-NN re-add (e.g.) Tangshan↔Home would let Dijkstra
-      // shortcut across the bay (world.geojson treats Bohai as China's
-      // territorial waters, so landFraction can't catch it via the coastline).
-      const jIsSynth = synthStart >= 0 && j >= synthStart;
-      if (iIsSynth && jIsSynth) continue;
-      // Real geography: even for mixed (synth, real) or (real, real) pairs,
-      // don't let k-NN add an inland edge whose great-circle is mostly over
-      // open ocean. landFraction is a coarse filter that catches segments
-      // straddling, say, the East China Sea.
+      // Corridor-bypass guard: when both endpoints are user-configured corridor
+      // hubs, skip the k-NN edge — they're already chained via corridorEdges
+      // below, and letting k-NN re-add a long-chord edge between two corridor
+      // entries would let Dijkstra shortcut across whatever water/empty zone
+      // the corridor was specifically configured to bridge.
+      const jInCorridor = corridorStart >= 0 && j >= corridorStart;
+      if (iInCorridor && jInCorridor) continue;
+      // Real geography: even for mixed pairs, don't let k-NN add an inland
+      // edge whose great-circle is mostly over open ocean. landFraction
+      // catches segments straddling open sea between sub-continents.
       if (landFraction(hubs[i], hubs[j]) < 0.85) continue;
       const e = i < j ? i * N + j : j * N + i;
       if (seen.has(e)) continue;
@@ -229,15 +212,15 @@ function buildLandGraph(): void {
       added++;
     }
   }
-  // Forced 京-沈走廊 edges (Tianjin↔Tangshan↔Qinhuangdao↔Shanhaiguan↔Huludao
-  // ↔Home↔Shenyang). The k-NN above keeps stealing Tangshan's neighbour
-  // slots for closer Beijing-area facilities, so the corridor chain never
-  // forms naturally and Dijkstra falls back to a Bohai-spanning chord. These
-  // edges hard-wire the chain so the same Dijkstra has a real overland path.
-  if (synthStart >= 0) {
-    for (const [a, b] of SYNTHETIC_CN_EDGES) {
-      const ia = synthStart + a;
-      const ib = synthStart + b;
+  // Forced corridor edges from /data/topology.json. The k-NN above keeps
+  // stealing corridor hubs' neighbour slots for closer dense-facility regions,
+  // so the configured chain doesn't form naturally and Dijkstra could fall
+  // back to a chord across whatever the corridor was meant to bridge. These
+  // edges hard-wire the chain so the same Dijkstra finds a real overland path.
+  if (corridorStart >= 0) {
+    for (const [a, b] of corridorEdges) {
+      const ia = corridorStart + a;
+      const ib = corridorStart + b;
       if (ia < N && ib < N) addUndir(ia, ib);
     }
   }

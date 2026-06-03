@@ -43,7 +43,10 @@ impl GeoResolver {
                 }
             },
             Some(p) => {
-                eprintln!("geoip: database {} not found; public IPs will have no geo", p.display());
+                eprintln!(
+                    "geoip: database {} not found; public IPs will have no geo",
+                    p.display()
+                );
                 None
             }
             None => None,
@@ -122,7 +125,7 @@ fn is_local_v6(a: Ipv6Addr) -> bool {
         || a.is_unspecified()
         || a.is_multicast()
         || is_ula_v6(a)         // fc00::/7
-        || is_link_local_v6(a)  // fe80::/10
+        || is_link_local_v6(a) // fe80::/10
 }
 
 fn is_ula_v6(a: Ipv6Addr) -> bool {
@@ -145,7 +148,7 @@ mod tests {
     #[test]
     fn private_v4_maps_to_home() {
         let r = home_resolver();
-        let p = r.lookup("192.0.2.4".parse().unwrap()).unwrap();
+        let p = r.lookup("192.168.1.1".parse().unwrap()).unwrap();
         assert!(p.is_home);
         assert_eq!(p.lat, 37.77);
         assert_eq!(p.lon, -122.42);
@@ -160,8 +163,14 @@ mod tests {
     #[test]
     fn local_classification() {
         for ip in [
-            "10.0.0.1", "172.16.5.4", "192.168.1.1", "127.0.0.1", "169.254.1.1",
-            "100.64.0.1", "224.0.0.1", "0.0.0.0",
+            "10.0.0.1",
+            "172.16.5.4",
+            "192.168.1.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "100.64.0.1",
+            "224.0.0.1",
+            "0.0.0.0",
         ] {
             assert!(is_local(ip.parse().unwrap()), "{ip} should be local");
         }

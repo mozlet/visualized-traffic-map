@@ -1,0 +1,51 @@
+{
+  "//": "Optional regional-network overlay. Rename this file to topology.json to enable. Schema documented at web/src/topology.ts.",
+  "//1": "The example below describes mainland China: 16 ChinaNet/Unicom/Mobile backbone POPs, 17 trunk segments connecting them, and a Beijing↔Shenyang coastal corridor of synthetic hub points so landRoute can step overland instead of cutting across Bohai Bay. Replace with your own country/region's anchors.",
+  "pops": [
+    { "position": [116.4074, 39.9042], "name": "Beijing POP", "country": "CN" },
+    { "position": [121.4737, 31.2304], "name": "Shanghai POP", "country": "CN" },
+    { "position": [113.2644, 23.1291], "name": "Guangzhou POP", "country": "CN" },
+    { "position": [106.5516, 29.5630], "name": "Chongqing POP", "country": "CN" },
+    { "position": [117.2010, 39.0842], "name": "Tianjin POP", "country": "CN" },
+    { "position": [123.4290, 41.7968], "name": "Shenyang POP", "country": "CN" },
+    { "position": [113.6253, 34.7466], "name": "Zhengzhou POP", "country": "CN" },
+    { "position": [114.3055, 30.5928], "name": "Wuhan POP", "country": "CN" },
+    { "position": [108.9398, 34.3416], "name": "Xi'an POP", "country": "CN" },
+    { "position": [104.0668, 30.5728], "name": "Chengdu POP", "country": "CN" },
+    { "position": [102.7123, 25.0407], "name": "Kunming POP", "country": "CN" },
+    { "position": [87.6168, 43.8256], "name": "Urumqi POP", "country": "CN" },
+    { "position": [118.7969, 32.0603], "name": "Nanjing POP", "country": "CN" },
+    { "position": [120.1551, 30.2741], "name": "Hangzhou POP", "country": "CN" },
+    { "position": [120.3826, 36.0671], "name": "Qingdao POP", "country": "CN" },
+    { "position": [114.1694, 22.3193], "name": "Hong Kong POP", "country": "HK" }
+  ],
+  "trunks": [
+    ["Beijing POP", "Tianjin POP"],
+    ["Beijing POP", "Shenyang POP"],
+    ["Beijing POP", "Qingdao POP"],
+    ["Beijing POP", "Zhengzhou POP"],
+    ["Beijing POP", "Xi'an POP"],
+    ["Zhengzhou POP", "Wuhan POP"],
+    ["Wuhan POP", "Guangzhou POP"],
+    ["Wuhan POP", "Shanghai POP"],
+    ["Xi'an POP", "Chengdu POP"],
+    ["Xi'an POP", "Urumqi POP"],
+    ["Chengdu POP", "Chongqing POP"],
+    ["Chengdu POP", "Kunming POP"],
+    ["Chongqing POP", "Wuhan POP"],
+    ["Shanghai POP", "Nanjing POP"],
+    ["Shanghai POP", "Hangzhou POP"],
+    ["Shanghai POP", "Guangzhou POP"],
+    ["Guangzhou POP", "Hong Kong POP"]
+  ],
+  "//corridorHubs": "Tianjin→Tangshan→Qinhuangdao→Shanhaiguan→Huludao→Shenyang. PeeringDB has few facilities along this stretch; without these, Dijkstra prefers a chord across Bohai Bay. Each entry is [longitude, latitude].",
+  "corridorHubs": [
+    [117.2010, 39.0842],
+    [118.1759, 39.6356],
+    [119.5979, 39.9352],
+    [119.7794, 40.0103],
+    [120.8369, 40.7112],
+    [123.4290, 41.7968]
+  ],
+  "corridorEdges": [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]
+}

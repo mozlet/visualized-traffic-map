@@ -105,12 +105,13 @@ function toLive(flow: Flow, born: number): LiveFlow | null {
   const octets = flow.octets ?? 0;
 
   // ALL flow paths go through the data-driven segmentPath (continent + cable
-  // graph). mtr's measured hop polyline must NOT be used as flow geometry — mtr
-  // hop coords are MaxMind AS-default PoPs (郑州 113.7,34.8 / 北京 116.4,39.9)
-  // and trailing private-IP hops, so painting them as a literal polyline draws
-  // bogus jumps (a SanJose flow truncated at 郑州, a Bristol flow detouring through
-  // Florida). routes.ts still computes routeMap for the optional /routes overlay
-  // — it doesn't drive a flow's path here.
+  // graph). mtr's measured hop polyline must NOT be used as flow geometry —
+  // mtr hop coords are MaxMind AS-default PoPs (a transit/cloud ASN's HQ city,
+  // not the actual edge serving you) plus trailing private-IP hops, so
+  // painting them as a literal polyline draws bogus jumps (an SJC-bound flow
+  // truncated at the AS's HQ city, a Bristol flow detouring through Florida).
+  // routes.ts still computes routeMap for the optional /routes overlay — it
+  // doesn't drive a flow's path here.
   const r = flowPath(src, dst);
   const path = r.path;
   const snapped = r.snapped;

@@ -79,6 +79,11 @@ web/public/data/hubs.local.geojson
 *.pmtiles
 *.osm.pbf
 
+# Per-operator topology overlay (regional POPs / trunk lines / corridor hubs).
+# Repo ships topology.example.json as a template; users rename to topology.json
+# to enable. Kept out of git so no operator's network layout is leaked.
+web/public/data/topology.json
+
 # tilemaker build scratch (lua + config + the giant PBF + output pmtiles)
 pmtiles-build/
 
