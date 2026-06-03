@@ -278,16 +278,21 @@ function nearestNode(p: LngLat): number {
   return best;
 }
 
+// Within this distance, both endpoints can pick any landing as their entry/exit
+// (not just the geographically nearest). Dijkstra then factors the access-leg
+// distance into the routing decision, so e.g. San Diego (which has only south-
+// Pacific cables landing on its doorstep) can still route via Hermosa Beach
+// /Manhattan Beach ~200 km north, paying a 200 km land hop to reach a trans-
+// Pacific cable instead of riding a 15,000 km detour via Australia. 800 km
+// covers Phoenix → LA / Las Vegas → LA / Denver → SF, which are the realistic
+// "you reach a major cable hub overland and step onto Trans-Pacific" cases.
+const ENDPOINT_SNAP_KM = 800;
+
 // Shortest path through the real submarine cable network from a to b. Returns
 // the concatenated cable polyline (entry landing first, exit landing last), or
 // null when the cable graph doesn't connect them.
 function cableRoute(a: LngLat, b: LngLat): LngLat[] | null {
   if (nodeCoord.length === 0) return null;
-  const ia = nearestNode(a);
-  const ib = nearestNode(b);
-  if (ia < 0 || ib < 0) return null;
-  if (ia === ib) return [nodeCoord[ia]];
-  // Naive O(V^2) Dijkstra — node count is small (~1.4k) and results are cached.
   const V = nodeCoord.length;
   const dist = new Float64Array(V);
   for (let i = 0; i < V; i++) dist[i] = Infinity;
@@ -296,7 +301,29 @@ function cableRoute(a: LngLat, b: LngLat): LngLat[] | null {
   const prevRev = new Uint8Array(V);
   for (let i = 0; i < V; i++) prevFrom[i] = -1;
   const visited = new Uint8Array(V);
-  dist[ia] = 0;
+
+  // Seed every routable landing within ENDPOINT_SNAP_KM of `a` with its own
+  // access-leg cost. Dijkstra then proceeds as a multi-source search: the path
+  // it ultimately picks is the one whose (a-access + cable + b-access) total
+  // is minimal.
+  let seeded = 0;
+  for (let i = 0; i < V; i++) {
+    if (!inMain[i]) continue;
+    const d = haversineKm(nodeCoord[i], a);
+    if (d <= ENDPOINT_SNAP_KM) {
+      dist[i] = d;
+      seeded++;
+    }
+  }
+  if (seeded === 0) {
+    const ia = nearestNode(a);
+    if (ia < 0) return null;
+    dist[ia] = haversineKm(nodeCoord[ia], a);
+  }
+
+  // Naive O(V^2) Dijkstra — node count is small (~1.4k) and results are cached.
+  // We run it to completion (no early stop on a single `ib`) since we don't
+  // know the best b-side landing until all candidates have been relaxed.
   for (;;) {
     let u = -1;
     let ud = Infinity;
@@ -306,7 +333,7 @@ function cableRoute(a: LngLat, b: LngLat): LngLat[] | null {
         u = i;
       }
     }
-    if (u < 0 || u === ib) break;
+    if (u < 0) break;
     visited[u] = 1;
     for (const e of graph[u]) {
       if (visited[e.to]) continue;
@@ -319,15 +346,36 @@ function cableRoute(a: LngLat, b: LngLat): LngLat[] | null {
       }
     }
   }
-  if (!isFinite(dist[ib])) return null;
-  // Reconstruct: walk back collecting cable polylines (or great-circles for
-  // synthetic intra-system landings) in route order.
+
+  // Choose the b-side landing that minimises (cable dist + access leg to b).
+  let bestEnd = -1;
+  let bestEndCost = Infinity;
+  for (let i = 0; i < V; i++) {
+    if (!inMain[i]) continue;
+    if (!isFinite(dist[i])) continue;
+    const d = haversineKm(nodeCoord[i], b);
+    if (d > ENDPOINT_SNAP_KM) continue;
+    const total = dist[i] + d;
+    if (total < bestEndCost) {
+      bestEndCost = total;
+      bestEnd = i;
+    }
+  }
+  // Fallback: nothing within snap radius (genuinely remote island) — fall back
+  // to the nearest cable node and let the access leg be whatever it is.
+  if (bestEnd < 0) {
+    const ib = nearestNode(b);
+    if (ib < 0 || !isFinite(dist[ib])) return null;
+    bestEnd = ib;
+  }
+
+  // Reconstruct: walk from bestEnd backward, stopping at the seeded a-side
+  // node (prevFrom[u] === -1 only for seeds with finite dist).
   const segs: LngLat[][] = [];
-  let cur = ib;
-  while (cur !== ia) {
+  let cur = bestEnd;
+  while (prevFrom[cur] >= 0) {
     const bi = prevBranch[cur];
     const from = prevFrom[cur];
-    if (from < 0) return null;
     let seg: LngLat[];
     if (bi >= 0) {
       seg = branches[bi].map((c) => [c[0], c[1]] as LngLat);
@@ -340,6 +388,8 @@ function cableRoute(a: LngLat, b: LngLat): LngLat[] | null {
     segs.unshift(seg);
     cur = from;
   }
+  // Empty path = a and b snap to the same landing.
+  if (segs.length === 0) return [nodeCoord[cur]];
   const out: LngLat[] = [];
   for (const s of segs) {
     if (out.length === 0) out.push(...s);
