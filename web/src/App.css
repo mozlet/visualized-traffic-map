@@ -462,6 +462,14 @@
   margin-bottom: 8px;
   font-variant-numeric: tabular-nums;
 }
+.livestats .flag {
+  width: 15px;
+  height: 11px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border-radius: 1px;
+  object-fit: cover;
+}
 .livestats h3 {
   font-size: 10px;
   text-transform: uppercase;
