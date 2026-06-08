@@ -7,6 +7,7 @@
 //! Run once (default) or as a periodic daemon with GEO_DOCTOR_INTERVAL_SECS set.
 //! TODO: mtr-measured hop paths + asn_pop PoP replacement (predecessor's tier 3).
 
+use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -159,6 +160,7 @@ async fn run_pass(pool: &sqlx::PgPool, home_lat: f64, home_lon: f64) -> anyhow::
         .execute(pool)
         .await
         .context("geo-doctor relocate pass")?;
+    let bogons = bogon_audit(pool).await?;
     let ips: i64 = sqlx::query_scalar("SELECT count(*) FROM ip_geo")
         .fetch_one(pool)
         .await?;
@@ -173,10 +175,47 @@ async fn run_pass(pool: &sqlx::PgPool, home_lat: f64, home_lon: f64) -> anyhow::
         .fetch_one(pool)
         .await?;
     eprintln!(
-        "geo-doctor: upserted rows={} | ip_geo total={ips} dirty={dirty} mtr-relocated={corrected} | decisions total={decisions}",
+        "geo-doctor: upserted rows={} | ip_geo total={ips} dirty={dirty} mtr-relocated={corrected} bogon-flagged={bogons} | decisions total={decisions}",
         affected.rows_affected()
     );
     Ok(())
+}
+
+/// Advisory pass (borrowed from sniffnet's bogon table): flag any PUBLIC-tier
+/// `ip_geo` row whose address is actually a reserved/special-use range that
+/// leaked into real flows (TEST-NET, documentation, benchmark, future-use …).
+/// Such addresses should never be real flow endpoints, so a one-time
+/// `reserved-range(<class>)` decision is recorded. Purely additive — it does not
+/// touch the observed/relocate passes or `ip_geo`. (`is_local` ranges resolve to
+/// home and never reach `ip_geo`, so only the leaked classes surface here.)
+async fn bogon_audit(pool: &sqlx::PgPool) -> anyhow::Result<u64> {
+    let ips: Vec<String> = sqlx::query_scalar(
+        "SELECT host(ip)::text FROM ip_geo g
+         WHERE NOT EXISTS (
+             SELECT 1 FROM geo_decisions d
+             WHERE d.ip = g.ip AND d.reason LIKE 'reserved-range%'
+         )",
+    )
+    .fetch_all(pool)
+    .await
+    .context("bogon audit scan")?;
+    let mut flagged = 0u64;
+    for ip_s in ips {
+        let Ok(ip) = ip_s.parse::<IpAddr>() else {
+            continue;
+        };
+        if let Some(class) = geoip::bogon_class(&ip) {
+            sqlx::query("INSERT INTO geo_decisions (ip, reason, notes) VALUES ($1::inet, $2, $3)")
+                .bind(&ip_s)
+                .bind(format!("reserved-range({class})"))
+                .bind("bogon address observed as a public flow endpoint")
+                .execute(pool)
+                .await
+                .context("bogon audit insert")?;
+            flagged += 1;
+        }
+    }
+    Ok(flagged)
 }
 
 #[tokio::main]

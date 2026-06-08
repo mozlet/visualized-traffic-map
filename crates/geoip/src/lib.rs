@@ -15,6 +15,9 @@ use std::path::Path;
 use maxminddb::{geoip2, Reader};
 use serde::Serialize;
 
+mod bogon;
+pub use bogon::bogon_class;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct GeoPoint {
     pub lat: f64,

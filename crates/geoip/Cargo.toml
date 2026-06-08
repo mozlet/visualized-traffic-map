@@ -18,3 +18,4 @@ path = "src/bin/geoip-lookup.rs"
 [dependencies]
 maxminddb = "0.24"
 serde = { workspace = true }
+ipnet = "2"
