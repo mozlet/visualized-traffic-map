@@ -67,6 +67,8 @@ export interface Strings {
   topDst: string;
   topSrc: string;
   topPort: string;
+  topServices?: string; // optional: falls back to English in App.tsx
+  topHosts?: string;
   unmatchedPanel: string;
   timeline: string;
   statsPanel: string;
@@ -85,7 +87,7 @@ export const STR: Record<Lang, Strings> = {
     about: 'About & legend', legend: 'Legend', screenshot: 'Screenshot', shareLink: 'Copy link', zoomIn: 'Zoom in',
     zoomOut: 'Zoom out', goHome: 'Go to home', rate: 'Rate', showing: 'Showing', cableRouted: 'Cable-routed', total: 'Total',
     bandwidth: 'Throughput · last', dstCountries: 'Dst countries', appsPanel: 'Apps (SNI)',
-    topDst: 'Top destinations', topSrc: 'Top sources (LAN)', topPort: 'Top ports', unmatchedPanel: 'Unclassified SNI (add rules)',
+    topDst: 'Top destinations', topSrc: 'Top sources (LAN)', topPort: 'Top ports', topServices: 'Top services', topHosts: 'Top hosts', unmatchedPanel: 'Unclassified SNI (add rules)',
     timeline: 'Throughput · click or drag to replay', statsPanel: 'Stats',
   },
   zh: {
@@ -99,7 +101,7 @@ export const STR: Record<Lang, Strings> = {
     slow: '慢', normal: '正常', fast: '快', resetLayout: '复位布局', search: '搜索', about: '关于 & 图例', legend: '图例',
     screenshot: '截图', shareLink: '复制链接', zoomIn: '放大', zoomOut: '缩小', goHome: '回到 home', rate: '速率',
     showing: '显示中', cableRouted: '光缆路由', total: '累计', bandwidth: '实时吞吐 · 近', dstCountries: '目的国',
-    appsPanel: '应用 (SNI)', topDst: 'Top 目的地', topSrc: 'Top 源主机 (内网)', topPort: 'Top 端口',
+    appsPanel: '应用 (SNI)', topDst: 'Top 目的地', topSrc: 'Top 源主机 (内网)', topPort: 'Top 端口', topServices: 'Top 服务', topHosts: 'Top 主机',
     unmatchedPanel: '待补规则 · 未分类 SNI', timeline: '吞吐时间轴 · 单击/拖拽回放', statsPanel: '流量统计',
   },
   'zh-Hant': {

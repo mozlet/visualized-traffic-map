@@ -37,6 +37,9 @@ const STREAM_KEY: &str = "flows:raw";
 // canonical truth applied at serve time so the immutable `flows` table stays raw.
 type Overrides = HashMap<String, (f64, f64, Option<String>)>;
 // ip_app classification (app, category) keyed by IP string.
+mod aggregator;
+use aggregator::Aggregator;
+
 type AppMap = HashMap<String, (String, Option<String>)>;
 
 #[derive(Clone)]
@@ -46,6 +49,7 @@ struct AppState {
     live_tx: broadcast::Sender<String>,
     overrides: Arc<RwLock<Overrides>>,
     apps: Arc<RwLock<AppMap>>,
+    agg: Arc<std::sync::Mutex<Aggregator>>,
     home_lat: f64,
     home_lon: f64,
 }
@@ -167,7 +171,16 @@ async fn main() -> anyhow::Result<()> {
         spawn_apps_refresh(pg.clone(), apps.clone());
     }
 
-    spawn_redis_bridge(client, live_tx.clone(), overrides.clone(), apps.clone());
+    // In-memory rolling-window stats aggregator, fed by the same live stream.
+    let agg = Arc::new(std::sync::Mutex::new(Aggregator::new()));
+    spawn_agg_tick(agg.clone());
+    spawn_redis_bridge(
+        client,
+        live_tx.clone(),
+        overrides.clone(),
+        apps.clone(),
+        agg.clone(),
+    );
 
     let state = Arc::new(AppState {
         redis,
@@ -175,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
         live_tx,
         overrides,
         apps,
+        agg,
         home_lat,
         home_lon,
     });
@@ -257,11 +271,26 @@ fn spawn_apps_refresh(pg: sqlx::PgPool, apps: Arc<RwLock<AppMap>>) {
 
 /// One Redis subscriber forwards every `flows:live` message into the broadcast,
 /// applying geo corrections + app labels once before fan-out to all clients.
+/// Roll the aggregator's per-second ring forward once a second.
+fn spawn_agg_tick(agg: Arc<std::sync::Mutex<Aggregator>>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.tick().await; // consume the immediate first tick
+        loop {
+            tick.tick().await;
+            if let Ok(mut a) = agg.lock() {
+                a.tick();
+            }
+        }
+    });
+}
+
 fn spawn_redis_bridge(
     client: redis::Client,
     tx: broadcast::Sender<String>,
     overrides: Arc<RwLock<Overrides>>,
     apps: Arc<RwLock<AppMap>>,
+    agg: Arc<std::sync::Mutex<Aggregator>>,
 ) {
     tokio::spawn(async move {
         loop {
@@ -280,6 +309,9 @@ fn spawn_redis_bridge(
                                 Ok(mut v) => {
                                     apply_overrides(&mut v, &*overrides.read().await);
                                     apply_apps(&mut v, &*apps.read().await);
+                                    if let Ok(mut a) = agg.lock() {
+                                        a.record(&v);
+                                    }
                                     v.to_string()
                                 }
                                 Err(_) => payload,
@@ -423,85 +455,13 @@ async fn stats_handler(
     State(state): State<Arc<AppState>>,
     Query(q): Query<StatsQuery>,
 ) -> impl IntoResponse {
-    let empty = || Json(json!({ "bps": 0, "top_dst": [], "top_countries": [] }));
-    let Some(pg) = &state.pg else {
-        return empty().into_response();
-    };
-    let window = q.window.unwrap_or(60.0).clamp(1.0, 3600.0);
-    // Throughput over the trailing `window`: sum the bytes of flows EXPORTED in the
-    // window (by recv_time) ÷ window. De-dup only EXACT re-exports (same identity +
-    // bytes + flow span); delta re-exports carry different bytes and are kept.
-    // (A prior version amortised each flow over its lifetime — that zeroed out a
-    // download whose long flows expired just before the window, showing single-digit
-    // Mbps for a multi-hundred-Mbps link.)
-    let bps: f64 = sqlx::query_scalar(
-        "WITH uniq AS (
-             SELECT DISTINCT ON (src_addr, dst_addr, src_port, dst_port, flow_start, flow_end, octets)
-                    octets::float8 AS oct
-             FROM flows
-             WHERE recv_time > now() - make_interval(secs => $1) AND octets IS NOT NULL
-         )
-         SELECT COALESCE(sum(oct), 0) * 8 / $1 FROM uniq",
-    )
-    .bind(window)
-    .fetch_one(pg)
-    .await
-    .unwrap_or(0.0);
-    // Top talkers/countries/ports share the SAME trailing `window` as bps, so the
-    // whole panel reflects the time range the operator picked (5s … 10m).
-    let top_dst: Vec<(String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT host(f.dst_addr)::text, COALESCE(ig.corr_country, f.dst_country), COALESCE(sum(f.octets),0)::bigint
-         FROM flows f LEFT JOIN ip_geo ig ON ig.ip = f.dst_addr
-         WHERE f.recv_time > now() - make_interval(secs => $1)
-           AND NOT (f.dst_addr <<= '10.0.0.0/8' OR f.dst_addr <<= '172.16.0.0/12'
-                    OR f.dst_addr <<= '192.168.0.0/16' OR f.dst_addr <<= '224.0.0.0/4')
-         GROUP BY f.dst_addr, COALESCE(ig.corr_country, f.dst_country) ORDER BY 3 DESC NULLS LAST LIMIT 8",
-    )
-    .bind(window)
-    .fetch_all(pg)
-    .await
-    .unwrap_or_default();
-    let top_c: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT COALESCE(ig.corr_country, f.dst_country) AS cc, COALESCE(sum(f.octets),0)::bigint
-         FROM flows f LEFT JOIN ip_geo ig ON ig.ip = f.dst_addr
-         WHERE f.recv_time > now() - make_interval(secs => $1) AND COALESCE(ig.corr_country, f.dst_country) IS NOT NULL
-         GROUP BY 1 ORDER BY 2 DESC LIMIT 6",
-    )
-    .bind(window)
-    .fetch_all(pg)
-    .await
-    .unwrap_or_default();
-    // Top internal source hosts by traffic (who on the LAN is busy).
-    let top_src: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT host(src_addr)::text, COALESCE(sum(octets),0)::bigint FROM flows
-         WHERE recv_time > now() - make_interval(secs => $1)
-           AND (src_addr <<= '10.0.0.0/8' OR src_addr <<= '172.16.0.0/12' OR src_addr <<= '192.168.0.0/16')
-         GROUP BY 1 ORDER BY 2 DESC LIMIT 6",
-    )
-    .bind(window)
-    .fetch_all(pg)
-    .await
-    .unwrap_or_default();
-    // Top service ports by traffic. The well-known port is the smaller of the
-    // pair (the other side is an ephemeral port), so group by LEAST(src,dst).
-    let top_port: Vec<(Option<i32>, i64)> = sqlx::query_as(
-        "SELECT LEAST(src_port, dst_port) AS svc, COALESCE(sum(octets),0)::bigint FROM flows
-         WHERE recv_time > now() - make_interval(secs => $1) AND src_port IS NOT NULL AND dst_port IS NOT NULL
-         GROUP BY 1 ORDER BY 2 DESC LIMIT 6",
-    )
-    .bind(window)
-    .fetch_all(pg)
-    .await
-    .unwrap_or_default();
-    Json(json!({
-        "bps": bps.round() as i64,
-        "window": window,
-        "top_dst": top_dst.iter().map(|(ip, c, b)| json!({"ip": ip, "country": c, "bytes": b})).collect::<Vec<_>>(),
-        "top_countries": top_c.iter().map(|(c, b)| json!({"country": c, "bytes": b})).collect::<Vec<_>>(),
-        "top_src": top_src.iter().map(|(ip, b)| json!({"ip": ip, "bytes": b})).collect::<Vec<_>>(),
-        "top_port": top_port.iter().map(|(p, b)| json!({"port": p, "bytes": b})).collect::<Vec<_>>(),
-    }))
-    .into_response()
+    // Live stats now come from the in-memory rolling-window aggregator (fed by
+    // the same Redis live stream). History/replay still come from Postgres via
+    // /api/history. The ring holds up to 10 minutes, so the window is clamped
+    // there; each panel splits in/out (download vs upload) from the home POV.
+    let window = q.window.unwrap_or(60.0).clamp(1.0, 600.0);
+    let snap = state.agg.lock().unwrap().snapshot(window);
+    Json(snap).into_response()
 }
 
 #[derive(Deserialize)]
