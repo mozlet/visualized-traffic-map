@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/flowd-parse", "crates/ingestor", "crates/geoip", "crates/api", "crates/geo-doctor", "crates/mtr-worker", "crates/sni-sniff", "crates/fetch-hubs"]
+members = ["crates/flowd-parse", "crates/ingestor", "crates/geoip", "crates/api", "crates/geo-doctor", "crates/mtr-worker", "crates/sni-sniff", "crates/fetch-hubs", "crates/services"]
 
 [workspace.package]
 edition = "2021"

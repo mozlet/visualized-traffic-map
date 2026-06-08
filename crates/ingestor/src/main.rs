@@ -150,6 +150,10 @@ fn enriched_json(
     if let serde_json::Value::Object(map) = &mut value {
         map.insert("src_geo".into(), serde_json::to_value(src_geo).ok()?);
         map.insert("dst_geo".into(), serde_json::to_value(dst_geo).ok()?);
+        // Well-known service from the port/proto (nmap table). Fills the gap
+        // SNI can't see (SNI is 443-only); null when not a known TCP/UDP port.
+        let service = services::flow_service(rec.src_port, rec.dst_port, rec.protocol);
+        map.insert("service".into(), serde_json::to_value(service).ok()?);
     }
     serde_json::to_string(&value).ok()
 }

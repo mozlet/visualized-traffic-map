@@ -22,6 +22,7 @@ export interface Flow {
   dst_geo?: Geo | null;
   app?: string | null; // SNI-derived application (ip_app), stamped by the API
   category?: string | null;
+  service?: string | null; // well-known port→service (nmap table), stamped by the ingestor
 }
 
 // A flow held in the live buffer, tagged with arrival time for fade-out.
