@@ -13,7 +13,12 @@ npm --prefix web run build
 
 echo "== installing to $PREFIX =="
 sudo mkdir -p "$PREFIX"/{bin,web,telegraf}
-sudo systemctl stop opn-flowmap-api.service 2>/dev/null || true
+# Stop every unit holding a binary (not just api) — `cp` over a running
+# executable fails with ETXTBSY. All are re-enabled --now at the end.
+for u in api ingest mtr geodoctor; do
+	sudo systemctl stop "opn-flowmap-$u.service" 2>/dev/null || true
+done
+sudo systemctl stop 'opn-flowmap-sni@*.service' 2>/dev/null || true
 sudo cp target/release/api target/release/ingestor target/release/geo-doctor target/release/mtr-worker target/release/sni-sniff "$PREFIX/bin/"
 sudo cp deploy/bin/ingest.sh deploy/bin/sni.sh "$PREFIX/bin/" && sudo chmod +x "$PREFIX/bin/ingest.sh" "$PREFIX/bin/sni.sh"
 sudo cp telegraf/netflow.conf "$PREFIX/telegraf/"
