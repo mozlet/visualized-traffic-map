@@ -198,12 +198,18 @@ export function tripsLayer(
 
 // OSM street-level basemap (Protomaps PMTiles, vector). One .pmtiles file
 // served as a single static asset (HTTP Range Requests stream tiles on demand),
-// no tile-server process. Local/LAN only — no external CDN. Gated to higher zoom
+// no tile-server process. Local/LAN only — no external CDN. URL is picked at
+// runtime from the settings panel ("Map Detail" = Off / Local / Country) and
+// resolved through /data/topology.json's `pmtiles` map. Gated to higher zoom
 // so the existing low-zoom basemap (countries/states/cables) stays clean.
-let pmtilesInst: PMTiles | null = null;
-function getPMT(): PMTiles {
-  if (!pmtilesInst) pmtilesInst = new PMTiles('/data/china.pmtiles');
-  return pmtilesInst;
+const pmtilesCache = new Map<string, PMTiles>();
+function getPMT(url: string): PMTiles {
+  let inst = pmtilesCache.get(url);
+  if (!inst) {
+    inst = new PMTiles(url);
+    pmtilesCache.set(url, inst);
+  }
+  return inst;
 }
 const OSM_MIN_ZOOM = 9; // below this, the global GeoJSON basemap is enough
 // Label-density gate: at z<OSM_DENSE_ZOOM the viewport is wide enough that the
@@ -218,8 +224,9 @@ export function osmBaseLayer(
   zoom: number,
   langField = 'name:en',
   active?: Set<string>,
+  pmtilesUrl?: string,
 ): Layer[] {
-  if (!visible || zoom < OSM_MIN_ZOOM) return [];
+  if (!visible || zoom < OSM_MIN_ZOOM || !pmtilesUrl) return [];
   const labelGate = !!active && active.size > 0 && zoom < OSM_DENSE_ZOOM;
   // Exact-cell match only (≈ 22 km square). The previous 3x3 halo (~60 km) let
   // every CN village within ~30km of home through, which at the user's home view
@@ -245,12 +252,12 @@ export function osmBaseLayer(
   const allowedPlaceClasses = placeClassesAtZoom(zoom);
   return [
     new TileLayer({
-      id: 'osm-pmtiles',
+      id: `osm-pmtiles:${pmtilesUrl}`, // distinct id per URL so a tier swap re-inits
       minZoom: OSM_MIN_ZOOM,
       maxZoom: 14, // tilemaker source's maxzoom; deck.gl over-zooms beyond
       tileSize: 256,
       getTileData: async ({ index }: { index: { x: number; y: number; z: number } }) => {
-        const t = await getPMT().getZxy(index.z, index.x, index.y);
+        const t = await getPMT(pmtilesUrl).getZxy(index.z, index.x, index.y);
         if (!t) return null;
         // MVT bytes → GeoJSON Feature array in wgs84 (one shot per tile).
         // `shape: 'geojson'` is required in loaders.gl v4+; without it the loader

@@ -6,9 +6,13 @@ import { MapCanvas } from './MapCanvas';
 import { fetchRoutes, type RoutePath } from './routes';
 import { loadLabels, labelLayers, searchPlaces } from './labels';
 import { loadInfra, infraLayers } from './infra';
+import { getTopology } from './topology';
+
+type MapTier = 'off' | 'local' | 'country';
 import { terminatorLayers } from './terminator';
 import { Timeline } from './Timeline';
 import { DraggablePanel } from './DraggablePanel';
+import { SniffnetView } from './SniffnetView';
 import { Icon } from './icons';
 import type { LiveFlow, ProtoKey, ServiceKey } from './types';
 import { STR, PLACE_LANG, PMT_LANG, LANG_NAMES, initialLang, saveLang, type Lang } from './i18n';
@@ -49,19 +53,15 @@ const BYTES = [0, 1000, 100000, 1000000];
 
 interface LiveStats {
   bps: number;
-  top_dst: { ip: string; country: string | null; bytes: number }[];
-  top_countries: { country: string; bytes: number }[];
-  top_src?: { ip: string; bytes: number }[];
-  top_port?: { port: number | null; bytes: number }[];
+  bps_in?: number; // download (remote → home)
+  bps_out?: number; // upload (home → remote)
+  top_dst: { ip: string; country: string | null; bytes: number; bytes_in?: number; bytes_out?: number }[];
+  top_countries: { country: string; bytes: number; bytes_in?: number; bytes_out?: number }[];
+  top_src?: { ip: string; bytes: number; bytes_in?: number; bytes_out?: number }[];
+  top_services?: { service: string; bytes: number; bytes_in?: number; bytes_out?: number }[];
+  top_hosts?: { label: string; asn?: string; country?: string | null; bytes: number; bytes_in?: number; bytes_out?: number }[];
 }
 
-// Well-known port → service label for the Top ports panel.
-const PORT_SVC: Record<number, string> = {
-  443: 'HTTPS', 80: 'HTTP', 53: 'DNS', 22: 'SSH', 123: 'NTP', 25: 'SMTP',
-  587: 'SMTP', 993: 'IMAPS', 995: 'POP3S', 3478: 'STUN', 51820: 'WireGuard',
-  500: 'IPsec', 1194: 'OpenVPN', 3389: 'RDP', 5228: 'GCM',
-};
-const portLabel = (p: number | null) => (p == null ? '—' : `${p}${PORT_SVC[p] ? ' ' + PORT_SVC[p] : ''}`);
 // Compact label for a stats window in seconds: 5→"5s", 60→"1m", 600→"10m".
 const fmtWin = (s: number) => (s % 60 === 0 ? `${s / 60}m` : `${s}s`);
 
@@ -86,6 +86,19 @@ function fmtBytes(b: number): string {
   if (b >= base) return (b / base).toFixed(0) + suf[1];
   return b + suf[0];
 }
+// Country flag icon (local SVG under /flags, zero-CDN). Hidden if no asset for
+// the ISO alpha-2 code (e.g. "ZZ" unknown). Flags adapted from sniffnet.
+const Flag = ({ cc }: { cc?: string | null }) =>
+  cc ? (
+    <img
+      className="flag"
+      src={`/flags/${cc.toLowerCase()}.svg`}
+      alt=""
+      onError={(e) => {
+        e.currentTarget.style.visibility = 'hidden';
+      }}
+    />
+  ) : null;
 
 // Hover tooltip for a flow (deck.gl getTooltip).
 function flowTip(f: LiveFlow): string {
@@ -93,7 +106,7 @@ function flowTip(f: LiveFlow): string {
   return [
     `${fl.src_addr}:${fl.src_port ?? ''} → ${fl.dst_addr}:${fl.dst_port ?? ''}`,
     fl.app ? `app: ${fl.app}${fl.category ? ` (${fl.category})` : ''}` : '',
-    `${f.proto.toUpperCase()} · ${fmtBytes(fl.octets ?? 0)}${fl.dst_geo?.country ? ' · ' + fl.dst_geo.country : ''}`,
+    `${f.proto.toUpperCase()}${fl.service ? ' · ' + fl.service : ''} · ${fmtBytes(fl.octets ?? 0)}${fl.dst_geo?.country ? ' · ' + fl.dst_geo.country : ''}`,
     f.ddos ? '⚠ DDoS' : '',
   ]
     .filter(Boolean)
@@ -153,6 +166,14 @@ export default function App() {
   useEffect(() => localStorage.setItem('opnmap.cablecolor', cableColorful ? '1' : '0'), [cableColorful]);
   const [showRoutes, setShowRoutes] = useState(false); // mtr paths off by default — opt-in overlay (avoids clutter)
   const [showLabels, setShowLabels] = useState(true);
+  // Map detail tier — Off (countries + cables only) / Local (regional vector
+  // basemap, ~tens of MB) / Country (large vector basemap, hundreds of MB to
+  // a few GB). URLs come from /data/topology.json's pmtiles map; if a tier
+  // has no URL configured the option is silently skipped at render time.
+  const [mapTier, setMapTier] = useState<MapTier>(
+    () => (localStorage.getItem('opnmap.mapTier') as MapTier | null) || 'off',
+  );
+  useEffect(() => localStorage.setItem('opnmap.mapTier', mapTier), [mapTier]);
   const [colorByApp, setColorByApp] = useState(false);
   const [showNight, setShowNight] = useState(false); // day/night terminator, off by default
   const [theme, setTheme] = useState<'dark' | 'light'>(
@@ -183,6 +204,10 @@ export default function App() {
   const [apps, setApps] = useState<AppStat[]>([]);
   const [unmatched, setUnmatched] = useState<{ sni: string; count: number }[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  // Sniffnet mode — full analyzer dashboard overlaid on the map (toggled from
+  // the brand bar). Persisted so a reload keeps the operator's chosen view.
+  const [sniffnet, setSniffnet] = useState(() => localStorage.getItem('opnmap.sniffnet') === '1');
+  useEffect(() => localStorage.setItem('opnmap.sniffnet', sniffnet ? '1' : '0'), [sniffnet]);
   const [dir, setDir] = useState<Dir>('all');
   const [minBytes, setMinBytes] = useState(0);
   const [enabled, setEnabled] = useState<Record<ProtoKey, boolean>>(
@@ -339,9 +364,10 @@ export default function App() {
   // OSM street-level basemap (Protomaps PMTiles) fades in deep-zoomed. Street
   // labels follow the UI language via PMT_LANG (falls through to name:latin if
   // the tileset doesn't include that language).
+  const pmtilesUrl = mapTier === 'off' ? undefined : getTopology().pmtiles[mapTier];
   const osm = useMemo(
-    () => osmBaseLayer(showLabels, zoomBucket, PMT_LANG[lang], activeFineRef.current),
-    [showLabels, zoomBucket, lang, activeVer],
+    () => osmBaseLayer(showLabels, zoomBucket, PMT_LANG[lang], activeFineRef.current, pmtilesUrl),
+    [showLabels, zoomBucket, lang, activeVer, pmtilesUrl],
   );
   // Labels rebuild only on zoom / toggle / active-traffic change — not per frame.
   const labels = useMemo(
@@ -436,6 +462,17 @@ export default function App() {
 
   return (
     <div className="root">
+      {sniffnet && (
+        <SniffnetView
+          live={live}
+          apps={apps}
+          flowsRef={flowsRef}
+          stats={stats}
+          statWin={statWin}
+          lang={lang}
+          onClose={() => setSniffnet(false)}
+        />
+      )}
       <MapCanvas
         flowsRef={flowsRef}
         staticLayers={staticLayers}
@@ -468,6 +505,13 @@ export default function App() {
         </button>
         <button className="btn" title={t.fullscreen} onClick={toggleFullscreen}>
           ⛶
+        </button>
+        <button
+          className={`btn sniff ${sniffnet ? 'active' : ''}`}
+          title="Sniffnet"
+          onClick={() => setSniffnet((s) => !s)}
+        >
+          📡
         </button>
         <select
           className="btn lang"
@@ -585,6 +629,16 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <div className="lbl2">{t.placeLabels}</div>
+            <div className="seg">
+              {(['off', 'local', 'country'] as MapTier[])
+                .filter((tier) => tier === 'off' || getTopology().pmtiles[tier])
+                .map((tier) => (
+                  <button key={tier} className={`segbtn ${mapTier === tier ? 'active' : ''}`} onClick={() => setMapTier(tier)}>
+                    {tier === 'off' ? t.all : tier === 'local' ? 'Local' : 'Country'}
+                  </button>
+                ))}
+            </div>
             <div className="row">
               <span className="proto">
                 <span className="swatch" style={{ background: 'rgb(56,189,248)' }} />
@@ -680,6 +734,9 @@ export default function App() {
       <DraggablePanel id="livestats" className="livestats" title={t.statsPanel} maxBody="calc(100vh - 80px)">
         <div className="bw">{fmtBps(live.bps)}</div>
         <div className="bwlbl">{t.bandwidth} {fmtWin(statWin)}</div>
+        {(live.bps_in != null || live.bps_out != null) && (
+          <div className="bwio">↓ {fmtBps(live.bps_in ?? 0)} · ↑ {fmtBps(live.bps_out ?? 0)}</div>
+        )}
         {live.top_countries.length > 0 && (
           <>
             <h3>{t.dstCountries} · {fmtWin(statWin)}</h3>
@@ -687,7 +744,7 @@ export default function App() {
               const max = live.top_countries[0]?.bytes || 1;
               return (
                 <div className="bar" key={c.country}>
-                  <span className="bar-l">{c.country}</span>
+                  <span className="bar-l"><Flag cc={c.country} />{c.country}</span>
                   <span className="bar-track">
                     <span className="bar-fill" style={{ width: `${(c.bytes / max) * 100}%` }} />
                   </span>
@@ -720,7 +777,7 @@ export default function App() {
             {live.top_dst.slice(0, 6).map((d) => (
               <div className="talk" key={d.ip}>
                 <span className="talk-ip">{d.ip}</span>
-                <span className="talk-c">{d.country ?? '-'}</span>
+                <span className="talk-c"><Flag cc={d.country} />{d.country ?? '-'}</span>
                 <span className="talk-b">{fmtBytes(d.bytes)}</span>
               </div>
             ))}
@@ -737,13 +794,25 @@ export default function App() {
             ))}
           </>
         )}
-        {(live.top_port?.length ?? 0) > 0 && (
+        {(live.top_services?.length ?? 0) > 0 && (
           <>
-            <h3>{t.topPort}</h3>
-            {live.top_port!.slice(0, 5).map((p) => (
-              <div className="talk" key={p.port ?? 'none'}>
-                <span className="talk-ip">{portLabel(p.port)}</span>
-                <span className="talk-b">{fmtBytes(p.bytes)}</span>
+            <h3>{t.topServices ?? 'Top services'}</h3>
+            {live.top_services!.slice(0, 6).map((s) => (
+              <div className="talk" key={s.service}>
+                <span className="talk-ip">{s.service}</span>
+                <span className="talk-b">{fmtBytes(s.bytes)}</span>
+              </div>
+            ))}
+          </>
+        )}
+        {(live.top_hosts?.length ?? 0) > 0 && (
+          <>
+            <h3>{t.topHosts ?? 'Top hosts'}</h3>
+            {live.top_hosts!.slice(0, 6).map((h) => (
+              <div className="talk" key={`${h.label}|${h.asn ?? ''}|${h.country ?? ''}`}>
+                <span className="talk-ip" title={h.asn ? `AS${h.asn}` : ''}>{h.label}</span>
+                <span className="talk-c"><Flag cc={h.country} />{h.country ?? '-'}</span>
+                <span className="talk-b">{fmtBytes(h.bytes)}</span>
               </div>
             ))}
           </>

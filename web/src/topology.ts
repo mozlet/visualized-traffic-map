@@ -11,6 +11,13 @@ export interface POPNode {
   country?: string;
 }
 
+export interface PMTilesUrls {
+  /** Mid tier: a regional vector basemap (~10-100 MB). Empty = unavailable. */
+  local?: string;
+  /** Large tier: a country / continent vector basemap (~0.5-3 GB). */
+  country?: string;
+}
+
 export interface Topology {
   /** Visible backbone POPs (rendered by infra.ts as sky-400 dots + label). */
   pops: POPNode[];
@@ -24,9 +31,11 @@ export interface Topology {
   corridorHubs: [number, number][];
   /** Index pairs into corridorHubs that must be wired as graph edges. */
   corridorEdges: [number, number][];
+  /** Vector basemap (PMTiles) URLs per detail tier. Either may be empty. */
+  pmtiles: PMTilesUrls;
 }
 
-const EMPTY: Topology = { pops: [], trunks: [], corridorHubs: [], corridorEdges: [] };
+const EMPTY: Topology = { pops: [], trunks: [], corridorHubs: [], corridorEdges: [], pmtiles: {} };
 let topology: Topology = EMPTY;
 let loaded = false;
 
@@ -42,6 +51,10 @@ export async function loadTopology(): Promise<void> {
       trunks: Array.isArray(j.trunks) ? j.trunks : [],
       corridorHubs: Array.isArray(j.corridorHubs) ? j.corridorHubs : [],
       corridorEdges: Array.isArray(j.corridorEdges) ? j.corridorEdges : [],
+      pmtiles: j.pmtiles && typeof j.pmtiles === 'object' ? {
+        local: typeof j.pmtiles.local === 'string' ? j.pmtiles.local : undefined,
+        country: typeof j.pmtiles.country === 'string' ? j.pmtiles.country : undefined,
+      } : {},
     };
   } catch {
     // No topology.json: stay generic; cables + mtr + basemap still render.

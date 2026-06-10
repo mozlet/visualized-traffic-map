@@ -47,5 +47,10 @@
     [120.8369, 40.7112],
     [123.4290, 41.7968]
   ],
-  "corridorEdges": [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]
+  "corridorEdges": [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]],
+  "//pmtiles": "Optional vector basemaps for the settings panel's Map Detail dropdown. 'local' = a small regional tile set (tens of MB), 'country' = a country/continent set (hundreds of MB up to a few GB). Either may be omitted — Off is always available. Build .pmtiles files yourself with tilemaker against a local OSM extract; the repo doesn't ship pre-built tiles (they're gitignored and operator-supplied).",
+  "pmtiles": {
+    "local": "/data/region.pmtiles",
+    "country": "/data/country.pmtiles"
+  }
 }
