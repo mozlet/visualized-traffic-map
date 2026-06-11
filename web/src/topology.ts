@@ -31,11 +31,32 @@ export interface Topology {
   corridorHubs: [number, number][];
   /** Index pairs into corridorHubs that must be wired as graph edges. */
   corridorEdges: [number, number][];
+  /**
+   * Countries that carry no transit traffic (e.g. North Korea): no land-graph
+   * edge may pass through their territory. Geometry comes from the matching
+   * Natural-Earth polygons in world.geojson — config names a real-world fact,
+   * the borders stay data-driven.
+   */
+  noTransitCountries: string[];
+  /**
+   * Water bodies land edges must not cross (outer-ring polygons, [lon,lat]).
+   * Used where a long overland edge would otherwise clip an enclosed bay that
+   * the land-fraction test dilutes away (e.g. Bohai Bay).
+   */
+  noTransitZones: [number, number][][];
   /** Vector basemap (PMTiles) URLs per detail tier. Either may be empty. */
   pmtiles: PMTilesUrls;
 }
 
-const EMPTY: Topology = { pops: [], trunks: [], corridorHubs: [], corridorEdges: [], pmtiles: {} };
+const EMPTY: Topology = {
+  pops: [],
+  trunks: [],
+  corridorHubs: [],
+  corridorEdges: [],
+  noTransitCountries: [],
+  noTransitZones: [],
+  pmtiles: {},
+};
 let topology: Topology = EMPTY;
 let loaded = false;
 
@@ -51,6 +72,8 @@ export async function loadTopology(): Promise<void> {
       trunks: Array.isArray(j.trunks) ? j.trunks : [],
       corridorHubs: Array.isArray(j.corridorHubs) ? j.corridorHubs : [],
       corridorEdges: Array.isArray(j.corridorEdges) ? j.corridorEdges : [],
+      noTransitCountries: Array.isArray(j.noTransitCountries) ? j.noTransitCountries : [],
+      noTransitZones: Array.isArray(j.noTransitZones) ? j.noTransitZones : [],
       pmtiles: j.pmtiles && typeof j.pmtiles === 'object' ? {
         local: typeof j.pmtiles.local === 'string' ? j.pmtiles.local : undefined,
         country: typeof j.pmtiles.country === 'string' ? j.pmtiles.country : undefined,

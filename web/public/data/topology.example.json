@@ -17,11 +17,14 @@
     { "position": [118.7969, 32.0603], "name": "Nanjing POP", "country": "CN" },
     { "position": [120.1551, 30.2741], "name": "Hangzhou POP", "country": "CN" },
     { "position": [120.3826, 36.0671], "name": "Qingdao POP", "country": "CN" },
+    { "position": [117.1201, 36.6512], "name": "Jinan POP", "country": "CN" },
+    { "position": [121.6147, 38.9140], "name": "Dalian POP", "country": "CN" },
     { "position": [114.1694, 22.3193], "name": "Hong Kong POP", "country": "HK" }
   ],
   "trunks": [
     ["Beijing POP", "Tianjin POP"],
     ["Beijing POP", "Shenyang POP"],
+    ["Shenyang POP", "Dalian POP"],
     ["Beijing POP", "Qingdao POP"],
     ["Beijing POP", "Zhengzhou POP"],
     ["Beijing POP", "Xi'an POP"],
@@ -34,6 +37,9 @@
     ["Chengdu POP", "Kunming POP"],
     ["Chongqing POP", "Wuhan POP"],
     ["Shanghai POP", "Nanjing POP"],
+    ["Nanjing POP", "Jinan POP"],
+    ["Jinan POP", "Tianjin POP"],
+    ["Jinan POP", "Qingdao POP"],
     ["Shanghai POP", "Hangzhou POP"],
     ["Shanghai POP", "Guangzhou POP"],
     ["Guangzhou POP", "Hong Kong POP"]
@@ -52,5 +58,23 @@
   "pmtiles": {
     "local": "/data/region.pmtiles",
     "country": "/data/country.pmtiles"
-  }
+  },
+  "//noTransitCountries": "Countries that carry no internet transit: no land-graph edge may cross their territory (borders come from world.geojson ADMIN). Korea\u2194China therefore rides the real Yellow-Sea cables instead of an overland line through the DPRK.",
+  "noTransitCountries": ["North Korea"],
+  "//noTransitZones": "Water bodies land edges must never cross, as [lon,lat] outer rings. The Bohai inner sea: a long k-NN edge can dilute the bay crossing below the land-fraction test, so the bay itself is declared off-limits to land edges. Submarine cables through the zone are unaffected.",
+  "noTransitZones": [
+    [
+      [117.95, 38.95],
+      [118.10, 38.35],
+      [118.90, 37.85],
+      [120.00, 37.65],
+      [121.00, 37.85],
+      [121.40, 38.70],
+      [121.05, 39.85],
+      [120.45, 40.35],
+      [119.75, 39.75],
+      [118.65, 39.05],
+      [117.95, 38.95]
+    ]
+  ]
 }

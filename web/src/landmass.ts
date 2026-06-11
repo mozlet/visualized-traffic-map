@@ -6,7 +6,7 @@
 // fraction — rather than a lon/lat continent guess.
 
 type LngLat = [number, number];
-type Poly = { xmin: number; xmax: number; ymin: number; ymax: number; ring: LngLat[]; group: string };
+type Poly = { xmin: number; xmax: number; ymin: number; ymax: number; ring: LngLat[]; group: string; admin: string };
 
 // Connected-landmass groups from Natural-Earth CONTINENT. Europe+Asia are ONE
 // landmass (overland routable); the Americas / Africa / Oceania are separated by
@@ -42,6 +42,7 @@ export async function loadLandmass(): Promise<void> {
       const g = f.geometry;
       if (!g) continue;
       const group = GROUP[f.properties?.CONTINENT as string] ?? 'OTHER';
+      const admin = (f.properties?.ADMIN ?? f.properties?.NAME ?? '') as string;
       const mp = g.type === 'MultiPolygon' ? g.coordinates : [g.coordinates];
       for (const poly of mp) {
         const ring = poly?.[0]; // outer ring; holes ignored (land/sea test only)
@@ -56,7 +57,7 @@ export async function loadLandmass(): Promise<void> {
           if (c[1] < ymin) ymin = c[1];
           if (c[1] > ymax) ymax = c[1];
         }
-        polys.push({ xmin, xmax, ymin, ymax, ring: ring as LngLat[], group });
+        polys.push({ xmin, xmax, ymin, ymax, ring: ring as LngLat[], group, admin });
       }
     }
     ready = polys.length > 0;
@@ -100,6 +101,75 @@ export function continentGroup(p: LngLat): string | null {
     if (pip(x, y, pl.ring)) return pl.group;
   }
   return null;
+}
+
+// Outer rings of the named countries (Natural-Earth ADMIN), for no-transit
+// barriers configured in topology.json — real borders, no hand-drawn geometry.
+export function countryRings(names: string[]): LngLat[][] {
+  const set = new Set(names);
+  return polys.filter((pl) => set.has(pl.admin)).map((pl) => pl.ring);
+}
+
+// A polygon land edges must not cross (bbox precomputed for cheap rejection).
+export interface Zone {
+  xmin: number;
+  xmax: number;
+  ymin: number;
+  ymax: number;
+  ring: LngLat[];
+}
+
+export function makeZone(ring: LngLat[]): Zone {
+  let xmin = 180,
+    xmax = -180,
+    ymin = 90,
+    ymax = -90;
+  for (const c of ring) {
+    if (c[0] < xmin) xmin = c[0];
+    if (c[0] > xmax) xmax = c[0];
+    if (c[1] < ymin) ymin = c[1];
+    if (c[1] > ymax) ymax = c[1];
+  }
+  return { xmin, xmax, ymin, ymax, ring };
+}
+
+// True when the great circle a→b passes through any zone. Slerp-sampled every
+// ~25 km; a bbox pre-check keeps the test near-free for the vast majority of
+// edges that are nowhere near a zone.
+export function zonesBlock(a: LngLat, b: LngLat, zones: Zone[]): boolean {
+  if (zones.length === 0) return false;
+  const exmin = Math.min(a[0], b[0]) - 0.5;
+  const exmax = Math.max(a[0], b[0]) + 0.5;
+  const eymin = Math.min(a[1], b[1]) - 0.5;
+  const eymax = Math.max(a[1], b[1]) + 0.5;
+  const near = zones.filter((z) => z.xmin <= exmax && z.xmax >= exmin && z.ymin <= eymax && z.ymax >= eymin);
+  if (near.length === 0) return false;
+  const toXYZ = ([lon, lat]: LngLat): [number, number, number] => {
+    const la = lat * D2R,
+      lo = lon * D2R;
+    return [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)];
+  };
+  const pa = toXYZ(a);
+  const pb = toXYZ(b);
+  const dot = Math.max(-1, Math.min(1, pa[0] * pb[0] + pa[1] * pb[1] + pa[2] * pb[2]));
+  const om = Math.acos(dot);
+  const steps = Math.min(256, Math.max(2, Math.ceil((om * 6371) / 25)));
+  const sin = Math.sin(om) || 1;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const s1 = Math.sin((1 - t) * om) / sin;
+    const s2 = Math.sin(t * om) / sin;
+    const x = pa[0] * s1 + pb[0] * s2,
+      y = pa[1] * s1 + pb[1] * s2,
+      z = pa[2] * s1 + pb[2] * s2;
+    const px = Math.atan2(y, x) * R2D;
+    const py = Math.atan2(z, Math.hypot(x, y)) * R2D;
+    for (const zn of near) {
+      if (px < zn.xmin || px > zn.xmax || py < zn.ymin || py > zn.ymax) continue;
+      if (pip(px, py, zn.ring)) return true;
+    }
+  }
+  return false;
 }
 
 // Fraction (0..1) of the great circle a→b lying over land. Sampled via slerp in

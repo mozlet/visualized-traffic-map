@@ -8,7 +8,7 @@
 // trans-Pacific straight cable. No distance penalties or special cases.
 
 import { densifyGreatCircle, densifyPath, haversineKm } from './geo';
-import { hubsReady, landRoute } from './hubs';
+import { hubsReady, landBackbone, landRoute } from './hubs';
 import { continentGroup, landmassReady } from './landmass';
 
 type LngLat = [number, number];
@@ -398,6 +398,149 @@ function cableRoute(a: LngLat, b: LngLat): LngLat[] | null {
   return out;
 }
 
+// ——— Joint land+cable graph ———
+// Real traffic that must cross water is land + cable + land: it rides the
+// terrestrial backbone to a landing station, crosses on submarine cables, and
+// rides the destination backbone inland. The joint graph is the union of the
+// hub backbone (hubs.ts) and the cable graph, plus one backhaul link per cable
+// node to its nearest hub (a landing station's tie into the local network).
+// One Dijkstra over it decides WHERE to land and HOW far to ride overland —
+// cost and geometry are the same real kilometres, no thresholds or special
+// cases.
+interface JointEdge {
+  to: number;
+  w: number;
+  branchIdx: number; // >=0: draw this cable polyline; -1: straight hop between node coords
+  reversed: boolean;
+}
+let jointAdj: JointEdge[][] | null = null;
+let jointCoord: LngLat[] = [];
+let hubCount = 0;
+
+function buildJointGraph(): boolean {
+  if (jointAdj) return true;
+  const lb = landBackbone();
+  if (!lb || nodeCoord.length === 0) return false;
+  hubCount = lb.hubs.length;
+  jointCoord = [...lb.hubs, ...nodeCoord];
+  jointAdj = Array.from({ length: hubCount + nodeCoord.length }, () => []);
+  for (let i = 0; i < hubCount; i++) {
+    for (const e of lb.adj[i]) jointAdj[i].push({ to: e.to, w: e.w, branchIdx: -1, reversed: false });
+  }
+  for (let j = 0; j < nodeCoord.length; j++) {
+    for (const e of graph[j]) {
+      jointAdj[hubCount + j].push({ to: hubCount + e.to, w: e.weight, branchIdx: e.branchIdx, reversed: e.reversed });
+    }
+    // Backhaul: the landing station's tie into the terrestrial backbone.
+    let best = -1;
+    let bd = Infinity;
+    for (let i = 0; i < hubCount; i++) {
+      const d = haversineKm(lb.hubs[i], nodeCoord[j]);
+      if (d < bd) {
+        bd = d;
+        best = i;
+      }
+    }
+    if (best >= 0) {
+      jointAdj[hubCount + j].push({ to: best, w: bd, branchIdx: -1, reversed: false });
+      jointAdj[best].push({ to: hubCount + j, w: bd, branchIdx: -1, reversed: false });
+    }
+  }
+  return true;
+}
+
+// Shortest land+cable path a→b over the joint graph (entered/left at each
+// endpoint's nearest hub), or null when the graph isn't available/connected.
+function jointRoute(a: LngLat, b: LngLat): LngLat[] | null {
+  if (!buildJointGraph() || !jointAdj) return null;
+  const N = jointCoord.length;
+  let ia = -1;
+  let ib = -1;
+  let da = Infinity;
+  let db = Infinity;
+  for (let i = 0; i < N; i++) {
+    const dA = haversineKm(jointCoord[i], a);
+    if (dA < da) {
+      da = dA;
+      ia = i;
+    }
+    const dB = haversineKm(jointCoord[i], b);
+    if (dB < db) {
+      db = dB;
+      ib = i;
+    }
+  }
+  if (ia < 0 || ib < 0) return null;
+  const dist = new Float64Array(N).fill(Infinity);
+  const prevFrom = new Int32Array(N).fill(-1);
+  const prevBranch = new Int32Array(N);
+  const prevRev = new Uint8Array(N);
+  const done = new Uint8Array(N);
+  dist[ia] = 0;
+  const heap: number[][] = [[0, ia]];
+  const push = (d: number, n: number) => {
+    heap.push([d, n]);
+    let i = heap.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (heap[p][0] <= heap[i][0]) break;
+      [heap[p], heap[i]] = [heap[i], heap[p]];
+      i = p;
+    }
+  };
+  const pop = (): number[] => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1,
+          r = 2 * i + 2;
+        let s = i;
+        if (l < heap.length && heap[l][0] < heap[s][0]) s = l;
+        if (r < heap.length && heap[r][0] < heap[s][0]) s = r;
+        if (s === i) break;
+        [heap[s], heap[i]] = [heap[i], heap[s]];
+        i = s;
+      }
+    }
+    return top;
+  };
+  while (heap.length) {
+    const [d, u] = pop();
+    if (done[u]) continue;
+    done[u] = 1;
+    if (u === ib) break;
+    for (const e of jointAdj[u]) {
+      if (done[e.to]) continue;
+      const nd = d + e.w;
+      if (nd < dist[e.to]) {
+        dist[e.to] = nd;
+        prevFrom[e.to] = u;
+        prevBranch[e.to] = e.branchIdx;
+        prevRev[e.to] = e.reversed ? 1 : 0;
+        push(nd, e.to);
+      }
+    }
+  }
+  if (!isFinite(dist[ib])) return null;
+  // Walk ib→ia backwards; cable edges contribute their real polyline, land and
+  // backhaul edges a straight hop between the two node coordinates.
+  const out: LngLat[] = [jointCoord[ib]];
+  for (let cur = ib; prevFrom[cur] >= 0; cur = prevFrom[cur]) {
+    const from = prevFrom[cur];
+    if (prevBranch[cur] >= 0) {
+      const seg = branches[prevBranch[cur]].map((c) => [c[0], c[1]] as LngLat);
+      if (prevRev[cur]) seg.reverse();
+      out.unshift(...seg.slice(0, -1)); // seg ends at `cur`, already in out
+    } else {
+      out.unshift(jointCoord[from]);
+    }
+  }
+  return [a, ...out, b];
+}
+
 // One link's path. The two rules above decide land vs cable; both use REAL data
 // (continent polygons, cable graph, hub graph). The legacy aForeign/bForeign
 // args are ignored — the decision is fully data-driven now.
@@ -417,32 +560,34 @@ export function segmentPath(
     return { path: densifyGreatCircle(a, b), snapped: false };
   }
 
+  // Water crossing → one shortest path over the joint land+cable graph: ride
+  // the terrestrial backbone to a landing station, cross on real cables, ride
+  // the destination backbone inland. Falls back to the pure cable graph, then
+  // to a straight line, if the joint graph is unavailable.
+  const viaCable = (): { path: LngLat[]; snapped: boolean } => {
+    const jr = jointRoute(a, b);
+    if (jr && jr.length >= 3) return { path: densifyPath(jr), snapped: true };
+    const route = cableRoute(a, b);
+    if (route && route.length >= 2) return { path: densifyPath([a, ...route, b]), snapped: true };
+    // The cable dataset doesn't connect these two — last-resort straight line.
+    return { path: densifyGreatCircle(a, b), snapped: false };
+  };
+
   const gA = continentGroup(a);
   const gB = continentGroup(b);
   const sameLandmass = gA != null && gB != null && gA === gB;
   let result: { path: LngLat[]; snapped: boolean };
   if (sameLandmass) {
-    // Same landmass → overland through the real hub backbone (Dijkstra). Routes
-    // Tokyo via Korea/Japan, Singapore via SE-Asia mainland, Moscow via Siberia —
+    // Same landmass → overland through the real hub backbone (Dijkstra),
     // crossing water only at the real narrow straits the hub graph bridges.
+    // When the hub graph says there IS no land connectivity (Korea↔China — no
+    // transit through North Korea; an island with its own cable landings), the
+    // link rides the real cable network instead, exactly like real traffic.
     const lr = landRoute(a, b);
-    result = { path: densifyPath(lr ?? [a, b]), snapped: false };
+    result = lr ? { path: densifyPath(lr), snapped: false } : viaCable();
   } else {
-    // Different landmass → real submarine cable shortest path. Each endpoint
-    // reaches its own NEAREST cable landing (route[0]/route[-1]) directly — that
-    // landing is the coast the flow boards from, so the access leg is a straight
-    // hop to the coast, not an inland-hub detour. (Routing the access through the
-    // hub graph dragged a NE-China home WEST to an inland hub and back across the
-    // Bohai before it could egress; going straight to the nearest landing fixes
-    // that while staying on real infrastructure for the ocean + foreign legs.)
-    const route = cableRoute(a, b);
-    if (route && route.length >= 2) {
-      const path = densifyPath([a, ...route, b]);
-      result = { path, snapped: true };
-    } else {
-      // The cable dataset doesn't connect these two — last-resort straight line.
-      result = { path: densifyGreatCircle(a, b), snapped: false };
-    }
+    // Different landmass → always the real submarine cable network.
+    result = viaCable();
   }
   cache.set(key, result);
   return result;

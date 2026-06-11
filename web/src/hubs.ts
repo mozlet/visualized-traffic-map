@@ -6,7 +6,7 @@
 // hubs.local.geojson (PeeringDB-enriched, operator-only) is preferred when present.
 
 import { haversineKm } from './geo';
-import { continentGroup, landFraction } from './landmass';
+import { continentGroup, countryRings, landFraction, makeZone, zonesBlock, type Zone } from './landmass';
 import { getTopology, loadTopology } from './topology';
 
 type LngLat = [number, number];
@@ -19,6 +19,10 @@ let hubs: LngLat[] = []; // inland interconnect points
 // corridorEdges in /data/topology.json) wins instead of any k-NN shortcut.
 let corridorStart = -1;
 let corridorEdges: [number, number][] = [];
+// Configured backbone POPs (topology.json pops/trunks) participate in routing:
+// they're appended as ordinary hubs (k-NN applies) and their trunk segments are
+// hard-wired edges — the user-declared REAL national backbone.
+let trunkEdges: [number, number][] = [];
 let grid = new Map<string, LngLat[]>(); // 1° spatial index over `hubs`
 let ready = false;
 
@@ -63,6 +67,17 @@ export async function loadHubs(): Promise<void> {
         corridorStart = hubs.length;
         corridorEdges = topo.corridorEdges;
         for (const p of topo.corridorHubs) hubs.push([p[0], p[1]]);
+      }
+      if (topo.pops.length > 0) {
+        const popStart = hubs.length;
+        const idx = new Map(topo.pops.map((p, i) => [p.name, popStart + i]));
+        for (const p of topo.pops) hubs.push([p.position[0], p.position[1]]);
+        trunkEdges = [];
+        for (const [na, nb] of topo.trunks) {
+          const ia = idx.get(na);
+          const ib = idx.get(nb);
+          if (ia != null && ib != null) trunkEdges.push([ia, ib]);
+        }
       }
       for (const p of hubs) {
         const k = cell(p);
@@ -160,6 +175,16 @@ export function inlandWaypoints(a: LngLat, b: LngLat): LngLat[] {
 function buildLandGraph(): void {
   const N = hubs.length;
   landAdj = Array.from({ length: N }, () => []);
+  const topo = getTopology();
+  const corridorEnd = corridorStart < 0 ? -1 : corridorStart + topo.corridorHubs.length;
+  const inCorridor = (i: number) => corridorStart >= 0 && i >= corridorStart && i < corridorEnd;
+  // No-transit barriers: real country borders (Natural Earth, by name) plus
+  // configured water-body polygons. No land edge may cross one — e.g. nothing
+  // routes overland through North Korea, nothing chords across Bohai Bay.
+  const zones: Zone[] = [
+    ...countryRings(topo.noTransitCountries).map(makeZone),
+    ...topo.noTransitZones.filter((r) => Array.isArray(r) && r.length >= 4).map((r) => makeZone(r as LngLat[])),
+  ];
   const cellIdx = new Map<string, number[]>();
   const key = (lon: number, lat: number) => `${Math.floor(lon)},${Math.floor(lat)}`;
   for (let i = 0; i < N; i++) {
@@ -190,7 +215,6 @@ function buildLandGraph(): void {
     }
     cands.sort((a, b) => haversineKm(hubs[i], hubs[a]) - haversineKm(hubs[i], hubs[b]));
     let added = 0;
-    const iInCorridor = corridorStart >= 0 && i >= corridorStart;
     for (const j of cands) {
       if (added >= LAND_K) break;
       if (grp[i] != null && grp[j] != null && grp[i] !== grp[j]) continue; // no cross-ocean land hop
@@ -199,12 +223,14 @@ function buildLandGraph(): void {
       // below, and letting k-NN re-add a long-chord edge between two corridor
       // entries would let Dijkstra shortcut across whatever water/empty zone
       // the corridor was specifically configured to bridge.
-      const jInCorridor = corridorStart >= 0 && j >= corridorStart;
-      if (iInCorridor && jInCorridor) continue;
+      if (inCorridor(i) && inCorridor(j)) continue;
       // Real geography: even for mixed pairs, don't let k-NN add an inland
       // edge whose great-circle is mostly over open ocean. landFraction
       // catches segments straddling open sea between sub-continents.
       if (landFraction(hubs[i], hubs[j]) < 0.85) continue;
+      // …and a no-transit barrier vetoes the edge outright; the fraction test
+      // alone dilutes a short bay crossing inside a long edge.
+      if (zonesBlock(hubs[i], hubs[j], zones)) continue;
       const e = i < j ? i * N + j : j * N + i;
       if (seen.has(e)) continue;
       seen.add(e);
@@ -224,8 +250,19 @@ function buildLandGraph(): void {
       if (ia < N && ib < N) addUndir(ia, ib);
     }
   }
-  // Union-find: bridge separate pieces (e.g. an island nation) to the nearest
-  // hub in another piece — one real narrow-strait crossing, not an ocean line.
+  // Configured national-backbone trunks (topology.json pops/trunks): real
+  // long-haul fibre segments, wired verbatim.
+  for (const [ia, ib] of trunkEdges) if (ia < N && ib < N) addUndir(ia, ib);
+  // Union-find: bridge separate pieces to the nearest hub in the main piece —
+  // but ONLY where the two pieces are effectively contiguous at the dataset's
+  // own resolution (a strait narrower than the node-cluster scale: Singapore↔
+  // Johor, Tsugaru, Dover) — or where the piece has no submarine-cable landing
+  // at all, so a land bridge is its only possible link. A piece WITH landings
+  // (Korea, Japan, Britain…) reaches other landmasses the way real traffic
+  // does: over the cable graph (segmentPath falls back to cableRoute when
+  // landRoute reports no land connectivity). Bridges may not cross a
+  // no-transit barrier either.
+  const BRIDGE_CONTIGUITY_KM = 60;
   const parent = Array.from({ length: N }, (_, i) => i);
   const find = (x: number): number => {
     while (parent[x] !== x) {
@@ -235,28 +272,75 @@ function buildLandGraph(): void {
     return x;
   };
   for (let i = 0; i < N; i++) for (const e of landAdj[i]) parent[find(i)] = find(e.to);
-  // Group by component; connect each non-largest component to nearest other-hub.
   const comp = new Map<number, number[]>();
   for (let i = 0; i < N; i++) {
     const r = find(i);
     (comp.get(r) ?? comp.set(r, []).get(r)!).push(i);
   }
   const groups = [...comp.values()].sort((a, b) => b.length - a.length);
-  for (let gi = 1; gi < groups.length; gi++) {
-    let bestA = -1, bestB = -1, bestD = Infinity;
-    for (const a of groups[gi]) {
-      for (const b of groups[0]) {
-        const d = haversineKm(hubs[a], hubs[b]);
-        if (d < bestD) { bestD = d; bestA = a; bestB = b; }
+  const cableServed = (members: number[]): boolean => {
+    for (const m of members) {
+      for (const l of landings) if (haversineKm(hubs[m], l) <= BRIDGE_CONTIGUITY_KM) return true;
+    }
+    return false;
+  };
+  // Repeat until a fixpoint: a piece may only become mergeable after its real
+  // neighbour merged first (Singapore joins via Johor, which joins via
+  // Thailand), so a single ordered pass is order-dependent.
+  const merged = new Uint8Array(groups.length);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let gi = 1; gi < groups.length; gi++) {
+      if (merged[gi]) continue;
+      let bestA = -1, bestB = -1, bestD = Infinity;
+      for (const a of groups[gi]) {
+        for (const b of groups[0]) {
+          const d = haversineKm(hubs[a], hubs[b]);
+          if (d < bestD && !zonesBlock(hubs[a], hubs[b], zones)) { bestD = d; bestA = a; bestB = b; }
+        }
+      }
+      // Merge when: the gap is narrower than the dataset's own cluster scale
+      // (Singapore↔Johor, Dover); or the joining edge is itself overland (a
+      // data-sparsity split inside one real landmass, e.g. Europe↔Russia); or
+      // the piece has no cable landing so a land bridge is its only link.
+      if (
+        bestA >= 0 &&
+        (bestD <= BRIDGE_CONTIGUITY_KM ||
+          landFraction(hubs[bestA], hubs[bestB]) >= 0.85 ||
+          !cableServed(groups[gi]))
+      ) {
+        addUndir(bestA, bestB);
+        parent[find(bestA)] = find(bestB);
+        groups[0].push(...groups[gi]);
+        merged[gi] = 1;
+        changed = true;
       }
     }
-    if (bestA >= 0) {
-      addUndir(bestA, bestB);
-      parent[find(bestA)] = find(bestB);
-      groups[0].push(...groups[gi]);
-    }
   }
+  compRoot = new Int32Array(N);
+  for (let i = 0; i < N; i++) compRoot[i] = find(i);
   landBuilt = true;
+}
+
+let compRoot = new Int32Array(0);
+
+// Connected land component containing p (id of the component's union-find
+// root), or -1 before data load. Two points share a component iff landRoute
+// can join them; cableRoute uses this to board cables only from the endpoint's
+// OWN landmass piece (Seoul enters at a Korean landing, never via a straight
+// access leg across the Yellow Sea to Shandong).
+export function landComponentOf(p: LngLat): number {
+  if (!ready || hubs.length === 0) return -1;
+  if (!landBuilt) buildLandGraph();
+  const i = nearestHub(p);
+  return i < 0 ? -1 : compRoot[i];
+}
+
+// The built terrestrial backbone, for the joint land+cable graph in cables.ts.
+export function landBackbone(): { hubs: LngLat[]; adj: { to: number; w: number }[][] } | null {
+  if (!ready || hubs.length === 0) return null;
+  if (!landBuilt) buildLandGraph();
+  return { hubs, adj: landAdj };
 }
 
 function nearestHub(p: LngLat): number {
