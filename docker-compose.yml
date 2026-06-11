@@ -2,7 +2,9 @@ services:
   postgres:
     image: timescale/timescaledb-ha:pg16
     container_name: opn-flowmap-pg
-    restart: unless-stopped
+    # always (not unless-stopped): podman-restart.service only boot-starts
+    # containers with restart-policy=always (rootless, linger enabled).
+    restart: always
     environment:
       POSTGRES_USER: ${PG_USER:-flowmap}
       POSTGRES_PASSWORD: ${PG_PASSWORD:-flowmap}
@@ -20,7 +22,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: opn-flowmap-redis
-    restart: unless-stopped
+    restart: always
     command:
       - redis-server
       - --appendonly
