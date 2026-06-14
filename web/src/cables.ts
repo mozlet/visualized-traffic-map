@@ -52,7 +52,7 @@ function pathLengthKm(line: LngLat[]): number {
 // Svalbard, Alaska AKORN...) but they connect Arctic communities, not continents;
 // leaving them in lets shortest-path Dijkstra teleport a flow over the pole
 // instead of riding a real trans-Pacific / trans-Atlantic + overland route (the
-// CLAUDE.md standard: Kansas/NY -> Home must be trans-Pacific, never Arctic).
+// standard: an inland Americas source -> home must be trans-Pacific, never Arctic).
 // Legit submarine cables stay below 60N everywhere EXCEPT the North-Atlantic
 // Nordic sector (Iceland/Greenland/Norway, lon -60..30, up to ~68N), so the rule
 // keeps those and drops the rest. Purely geometric: no cable names, no penalty.

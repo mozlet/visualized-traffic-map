@@ -56,7 +56,9 @@ pub enum ParseError {
     Io(#[from] io::Error),
     #[error("unexpected end of file inside record")]
     TruncatedRecord,
-    #[error("payload length {payload} does not match consumed bytes {consumed} (fields=0x{fields:08x})")]
+    #[error(
+        "payload length {payload} does not match consumed bytes {consumed} (fields=0x{fields:08x})"
+    )]
     PayloadMismatch {
         payload: usize,
         consumed: usize,
@@ -120,11 +122,10 @@ pub fn read_record<R: Read>(r: &mut R) -> Result<Option<FlowRecord>, ParseError>
 
     let payload_len = len_words * 4;
     let mut payload = vec![0u8; payload_len];
-    r.read_exact(&mut payload)
-        .map_err(|e| match e.kind() {
-            io::ErrorKind::UnexpectedEof => ParseError::TruncatedRecord,
-            _ => ParseError::Io(e),
-        })?;
+    r.read_exact(&mut payload).map_err(|e| match e.kind() {
+        io::ErrorKind::UnexpectedEof => ParseError::TruncatedRecord,
+        _ => ParseError::Io(e),
+    })?;
 
     decode_payload(fields, &payload).map(Some)
 }
@@ -138,7 +139,10 @@ pub struct FlowIter<R: Read> {
 
 impl<R: Read> FlowIter<R> {
     pub fn new(reader: R) -> Self {
-        Self { reader, done: false }
+        Self {
+            reader,
+            done: false,
+        }
     }
 }
 
@@ -195,7 +199,9 @@ impl<'a> Cursor<'a> {
     }
     fn u64(&mut self) -> Result<u64, ParseError> {
         let b = self.take(8)?;
-        Ok(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+        Ok(u64::from_be_bytes([
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        ]))
     }
     fn v4(&mut self) -> Result<IpAddr, ParseError> {
         let b = self.take(4)?;
@@ -351,10 +357,7 @@ c00002fe\
         assert_eq!(rec.protocol, Some(6));
         assert_eq!(rec.tcp_flags, Some(0x10));
         assert_eq!(rec.tos, Some(0x00));
-        assert_eq!(
-            rec.agent_addr.unwrap().to_string(),
-            "127.0.0.1"
-        );
+        assert_eq!(rec.agent_addr.unwrap().to_string(), "127.0.0.1");
         assert_eq!(rec.src_addr.unwrap().to_string(), "203.0.113.10");
         assert_eq!(rec.dst_addr.unwrap().to_string(), "192.0.2.4");
         assert_eq!(rec.gateway_addr.unwrap().to_string(), "192.0.2.254");

@@ -25,8 +25,11 @@ const { haversineKm } = await import(resolve(ROOT, 'web/src/geo.ts'));
 await Promise.all([loadCables(), loadHubs(), loadLandmass()]);
 
 type LngLat = [number, number];
+// HOME = your site coordinate; set HOME_LAT/HOME_LON env (defaults to 0,0 so no
+// real location is committed). e.g. HOME_LAT=.. HOME_LON=.. npx tsx route-baseline.mts
+const HOME: LngLat = [Number(process.env.HOME_LON) || 0, Number(process.env.HOME_LAT) || 0];
 const P: Record<string, LngLat> = {
-  Home: [0, 0],
+  Home: HOME,
   LA: [-118.24, 34.05], SF: [-122.42, 37.77], Sacramento: [-121.49, 38.58],
   KansasCity: [-94.578, 39.10], NY: [-74.01, 40.71], Rio: [-43.20, -22.91],
   Sydney: [151.21, -33.87], CapeTown: [18.42, -33.93],

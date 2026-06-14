@@ -21,7 +21,9 @@ const { haversineKm } = await import('../src/geo');
 
 await Promise.all([loadCables(), loadHubs(), loadLandmass()]);
 
-const HOME: [number, number] = [0, 0]; // Home
+// HOME = your site coordinate; set HOME_LAT/HOME_LON env (defaults to 0,0 so no
+// real location is committed).
+const HOME: [number, number] = [Number(process.env.HOME_LON) || 0, Number(process.env.HOME_LAT) || 0];
 const CITIES: Record<string, [number, number]> = {
   LA: [-118.2437, 34.0522],
   SF: [-122.4194, 37.7749],
