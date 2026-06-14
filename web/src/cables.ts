@@ -46,6 +46,26 @@ function pathLengthKm(line: LngLat[]): number {
   return n;
 }
 
+// A cable SEGMENT touching the high-Arctic transit band: the Arctic Ocean that
+// real intercontinental traffic never crosses. These ARE real cables in the
+// dataset (Polar Express trans-Siberian/Bering, Quintillion, Petropavlovsk-Anadyr,
+// Svalbard, Alaska AKORN...) but they connect Arctic communities, not continents;
+// leaving them in lets shortest-path Dijkstra teleport a flow over the pole
+// instead of riding a real trans-Pacific / trans-Atlantic + overland route (the
+// CLAUDE.md standard: Kansas/NY -> Home must be trans-Pacific, never Arctic).
+// Legit submarine cables stay below 60N everywhere EXCEPT the North-Atlantic
+// Nordic sector (Iceland/Greenland/Norway, lon -60..30, up to ~68N), so the rule
+// keeps those and drops the rest. Purely geometric: no cable names, no penalty.
+function arcticTransit(c: LngLat): boolean {
+  const lon = ((c[0] + 540) % 360) - 180; // normalise stitched coords past ±180
+  if (c[1] > 69) return true; // Svalbard, Polar Express Arctic apex, Quintillion
+  return c[1] > 60 && !(lon >= -60 && lon <= 30); // Bering + Russian-Arctic coast + Alaska
+}
+function crossesArctic(seg: LngLat[]): boolean {
+  for (const c of seg) if (arcticTransit(c)) return true;
+  return false;
+}
+
 // Trans-oceanic cables are split at ±180 into two LineStrings in GeoJSON. Rejoin
 // each pair (matched by dateline latitude) into one continuous polyline so the
 // graph carries the whole ocean leg.
@@ -158,6 +178,7 @@ function buildCableGraph(systems: LngLat[][][]): void {
     const landings: number[] = [];
     for (const seg of segs) {
       if (seg.length < 2) continue;
+      if (crossesArctic(seg)) continue; // drop Arctic-Ocean crossings (Bering, Siberian coast)
       const ia = findOrAdd(seg[0]);
       const ib = findOrAdd(seg[seg.length - 1]);
       ensureNode(ia);
